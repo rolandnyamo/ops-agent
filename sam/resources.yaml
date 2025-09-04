@@ -13,6 +13,11 @@ Parameters:
     Type: String
     Default: botsecret_e1b9c2a7c5f24ad6
     Description: Bot HMAC secret (text for build testing)
+  EnableAuth:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true','false']
+    Description: Toggle API authorizers (set to 'false' for local SAM testing)
 
 Globals:
   Function:
@@ -29,7 +34,7 @@ Resources:
       CorsConfiguration:
         AllowOrigins: ['*']
         AllowMethods: ['GET','POST','OPTIONS']
-        AllowHeaders: ['*']
+        AllowHeaders: ['authorization','Authorization','content-type','x-bot-signature','x-bot-timestamp']
       Auth:
         Authorizers:
           AdminCognitoAuth:
@@ -109,8 +114,10 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /qa
             Method: POST
-            Auth:
-              Authorizer: BotLambdaAuth
+            Auth: !If
+              - IsAuthEnabled
+              - { Authorizer: BotLambdaAuth }
+              - !Ref AWS::NoValue
       Environment:
         Variables:
           DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
@@ -143,8 +150,10 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /docs/ingest
             Method: POST
-            Auth:
-              Authorizer: AdminCognitoAuth
+            Auth: !If
+              - IsAuthEnabled
+              - { Authorizer: AdminCognitoAuth }
+              - !Ref AWS::NoValue
       Environment:
         Variables:
           DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
@@ -172,8 +181,10 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /docs/upload-url
             Method: POST
-            Auth:
-              Authorizer: AdminCognitoAuth
+            Auth: !If
+              - IsAuthEnabled
+              - { Authorizer: AdminCognitoAuth }
+              - !Ref AWS::NoValue
       Environment:
         Variables:
           RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
@@ -194,16 +205,20 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /settings
             Method: GET
-            Auth:
-              Authorizer: AdminCognitoAuth
+            Auth: !If
+              - IsAuthEnabled
+              - { Authorizer: AdminCognitoAuth }
+              - !Ref AWS::NoValue
         PutSettings:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /settings
             Method: PUT
-            Auth:
-              Authorizer: AdminCognitoAuth
+            Auth: !If
+              - IsAuthEnabled
+              - { Authorizer: AdminCognitoAuth }
+              - !Ref AWS::NoValue
       Environment:
         Variables:
           SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
@@ -223,3 +238,6 @@ Outputs:
     Value: !Ref UserPool
   UserPoolClientId:
     Value: !Ref UserPoolClient
+
+Conditions:
+  IsAuthEnabled: !Equals [ !Ref EnableAuth, 'true' ]

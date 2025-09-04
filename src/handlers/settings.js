@@ -1,5 +1,6 @@
-const AWS = require('aws-sdk');
-const ddb = new AWS.DynamoDB.DocumentClient();
+const { DynamoDBClient, GetItemCommand, PutItemCommand } = require('@aws-sdk/client-dynamodb');
+const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
+const ddb = new DynamoDBClient({});
 
 const TABLE = process.env.SETTINGS_TABLE;
 const PK = 'SETTINGS#GLOBAL';
@@ -37,8 +38,8 @@ exports.handler = async (event) => {
 
   if (method === 'GET') {
     try {
-      const res = await ddb.get({ TableName: TABLE, Key: { PK, SK } }).promise();
-      const item = res.Item;
+      const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall({ PK, SK }) }));
+      const item = res.Item ? unmarshall(res.Item) : undefined;
       const body = item ? item.data : defaults();
       return { statusCode: 200, body: JSON.stringify(body) };
     } catch (e) {
@@ -56,7 +57,7 @@ exports.handler = async (event) => {
     const now = new Date().toISOString();
     const item = { PK, SK, data: { ...defaults(), ...data, updatedAt: now } };
     try {
-      await ddb.put({ TableName: TABLE, Item: item }).promise();
+      await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(item) }));
       return { statusCode: 200, body: JSON.stringify(item.data) };
     } catch (e) {
       console.error('PUT /settings error', e);

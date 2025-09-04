@@ -1,0 +1,10 @@
+{
+  "name": "ops-agent-backend",
+  "private": true,
+  "version": "0.0.1",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.649.0",
+    "@aws-sdk/util-dynamodb": "^3.649.0"
+  }
+}
+

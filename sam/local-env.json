@@ -1,0 +1,22 @@
+{
+  "AskFn": {
+    "OPENAI_API_KEY": "TEST_OPENAI_KEY_LOCAL",
+    "DOCS_TABLE": "ops-agent-prod-docs",
+    "SETTINGS_TABLE": "ops-agent-prod-settings",
+    "RAW_BUCKET": "ops-agent-prod-raw-326445141506-us-east-1"
+  },
+  "IngestionFn": {
+    "DOCS_TABLE": "ops-agent-prod-docs",
+    "RAW_BUCKET": "ops-agent-prod-raw-326445141506-us-east-1"
+  },
+  "UploadUrlFn": {
+    "RAW_BUCKET": "ops-agent-prod-raw-326445141506-us-east-1"
+  },
+  "SettingsFn": {
+    "SETTINGS_TABLE": "ops-agent-prod-settings"
+  },
+  "BotAuthFn": {
+    "BOT_SECRET": "botsecret_local_testing"
+  }
+}
+

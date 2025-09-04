@@ -16,7 +16,27 @@ This repo uses a simple, production‑lean layout:
 
 ## Local development
 
-Handlers are plain Node.js modules under `src/handlers`. You can unit test them locally (e.g., with `node` or a test runner). The pipeline builds and deploys without needing a local build chain.
+Backend (SAM):
+- Requires AWS SAM CLI and Docker (for emulation)
+- Start local API (no auth):
+  - `npm run dev:api` (or see below for profile/region flags)
+- Uses your default AWS credentials; to use a profile: add `--profile <name>`
+- Ensure `sam/local-env.json` has your real table/bucket names for cloud resources
+
+Profiles and region:
+- Easiest: `AWS_PROFILE=my-profile AWS_REGION=us-east-1 npm run dev`
+- Or pass flags to just the API process via npm config args:
+  - `npm run dev --profile=my-profile --region=us-east-1`
+  - These map to `sam local start-api ... --profile my-profile --region us-east-1`
+
+Frontend (Next.js):
+- `cd frontend/admin`
+- Set `.env.local` with:
+  - `NEXT_PUBLIC_API_BASE=http://127.0.0.1:3001`
+  - `NEXT_PUBLIC_AWS_REGION=us-east-1` (not used when EnableAuth=false)
+  - `NEXT_PUBLIC_COGNITO_USER_POOL_ID=...` (optional for local no-auth)
+  - `NEXT_PUBLIC_COGNITO_USER_POOL_WEB_CLIENT_ID=...` (optional)
+- Run: `npm run dev` (or `npm run build && npm run start`)
 
 ## Next steps
 
