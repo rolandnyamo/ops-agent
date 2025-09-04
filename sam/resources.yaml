@@ -5,6 +5,14 @@ Description: App resources (Lambdas, API, roles, env)
 Parameters:
   ProjectName: { Type: String, Default: ops-agent }
   Stage: { Type: String, Default: prod }
+  OpenAIApiKey:
+    Type: String
+    Default: TEST_OPENAI_KEY_8e9a0a5f2fbd4f8a
+    Description: OpenAI API key (text for build testing)
+  BotApiSecret:
+    Type: String
+    Default: botsecret_e1b9c2a7c5f24ad6
+    Description: Bot HMAC secret (text for build testing)
 
 Globals:
   Function:
@@ -78,13 +86,7 @@ Resources:
       Handler: handlers/auth/botAuth.handler
       Environment:
         Variables:
-          BOT_SECRET_PARAM: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-BotApiSecretParamName' }
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - ssm:GetParameter
-              Resource: '*'
+          BOT_SECRET: !Ref BotApiSecret
 
   BotAuthPermission:
     Type: AWS::Lambda::Permission
@@ -114,6 +116,7 @@ Resources:
           DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
           SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
           RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+          OPENAI_API_KEY: !Ref OpenAIApiKey
       Policies:
         - Statement:
             - Effect: Allow

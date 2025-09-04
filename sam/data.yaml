@@ -61,21 +61,7 @@ Resources:
             ProjectionType: ALL
 
 
-  OpenAIKeyParam:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: "/openai/api_key"
-      Type: String
-      Value: "sdfdsfdsfsdf"
-      Tier: Standard
-
-  BotApiSecretParam:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: !Sub "/bot/secret"
-      Type: String
-      Value: "dfdfdfdfdfdopwejnmfvpjnpinj"
-      Tier: Standard
+  # No SSM parameters are created in this stack; secrets are passed as template parameters to the app stack.
 
 Outputs:
   RawBucketName:
@@ -102,9 +88,3 @@ Outputs:
   SettingsTableArn:
     Value: !GetAtt SettingsTable.Arn
     Export: { Name: !Sub "${ProjectName}-${Stage}-SettingsTableArn" }
-  OpenAIKeyParamName:
-    Value: !Ref OpenAIKeyParam
-    Export: { Name: !Sub "${ProjectName}-${Stage}-OpenAIKeyParamName" }
-  BotApiSecretParamName:
-    Value: !Ref BotApiSecretParam
-    Export: { Name: !Sub "${ProjectName}-${Stage}-BotApiSecretParamName" }

@@ -1,15 +1,5 @@
 const crypto = require('node:crypto');
-const AWS = require('aws-sdk');
-const ssm = new AWS.SSM();
-let cachedSecret;
-
-async function getSecret() {
-  if (cachedSecret) return cachedSecret;
-  const name = process.env.BOT_SECRET_PARAM;
-  const resp = await ssm.getParameter({ Name: name, WithDecryption: false }).promise();
-  cachedSecret = resp && resp.Parameter && resp.Parameter.Value;
-  return cachedSecret;
-}
+const BOT_SECRET = process.env.BOT_SECRET || '';
 
 function safeTimingEqual(a, b) {
   const ba = Buffer.from(a || '');
@@ -33,7 +23,7 @@ exports.handler = async (event) => {
       return { isAuthorized: false };
     }
 
-    const secret = await getSecret();
+    const secret = BOT_SECRET;
     if (!secret) return { isAuthorized: false };
 
     const body = event.body || '';
