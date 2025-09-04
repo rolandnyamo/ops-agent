@@ -196,6 +196,14 @@ Resources:
             Method: GET
             Auth:
               Authorizer: AdminCognitoAuth
+        PutSettings:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /settings
+            Method: PUT
+            Auth:
+              Authorizer: AdminCognitoAuth
       Environment:
         Variables:
           SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
@@ -204,6 +212,8 @@ Resources:
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
               Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
 
 Outputs:

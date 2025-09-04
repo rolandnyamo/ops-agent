@@ -1,17 +1,50 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
+import { getSettings, putSettings, type Settings } from '../lib/api';
 
 export default function Setup(){
-  const [branding, setBranding] = useState('Your School');
+  const [agentName, setAgentName] = useState('Agent');
   const [confidence, setConfidence] = useState(0.45);
   const [fallback, setFallback] = useState('Sorry, I could not find this in the documentation.');
   const [origins, setOrigins] = useState('https://www.example.edu');
   const [emails, setEmails] = useState('info@example.edu');
   const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  function save(){
-    setSaved(true);
-    setTimeout(()=>setSaved(false), 1200);
+  useEffect(() => {
+    (async () => {
+      try {
+        const s = await getSettings();
+        setAgentName(s.agentName || 'Agent');
+        setConfidence(typeof s.confidenceThreshold === 'number' ? s.confidenceThreshold : 0.45);
+        setFallback(s.fallbackMessage || fallback);
+        setOrigins((s.allowedOrigins || []).join(', '));
+        setEmails((s.notifyEmails || []).join(', '));
+      } catch (e:any) {
+        setError('Could not load settings (showing defaults).');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  async function save(){
+    setError(null);
+    try {
+      const dto: Settings = {
+        agentName,
+        confidenceThreshold: confidence,
+        fallbackMessage: fallback,
+        allowedOrigins: origins.split(',').map(s=>s.trim()).filter(Boolean),
+        notifyEmails: emails.split(',').map(s=>s.trim()).filter(Boolean),
+      };
+      await putSettings(dto);
+      setSaved(true);
+      setTimeout(()=>setSaved(false), 1200);
+    } catch (e:any) {
+      setError('Save failed. Please check values and try again.');
+    }
   }
 
   return (
@@ -19,8 +52,10 @@ export default function Setup(){
       <div className="grid cols-2">
         <div className="card">
           <h3 className="card-title">Global Settings</h3>
-          <label>Branding Name</label>
-          <input className="input" value={branding} onChange={e=>setBranding(e.target.value)} />
+          {loading && <div className="muted">Loading settings…</div>}
+          {error && <div className="chip" style={{borderColor:'#553'}}>{error}</div>}
+          <label>Agent Name</label>
+          <input className="input" value={agentName} onChange={e=>setAgentName(e.target.value)} />
           <div className="row" style={{marginTop:12}}>
             <div style={{flex:1}}>
               <label>Confidence Threshold</label>
@@ -36,7 +71,7 @@ export default function Setup(){
           <label style={{marginTop:12}}>Allowed Origins (CORS)</label>
           <textarea className="textarea" rows={2} value={origins} onChange={e=>setOrigins(e.target.value)} />
           <div className="row" style={{marginTop:14}}>
-            <button className="btn" onClick={save}>Save</button>
+            <button className="btn" onClick={save} disabled={loading}>Save</button>
             {saved && <div className="chip">Saved ✓</div>}
           </div>
         </div>
@@ -55,4 +90,3 @@ export default function Setup(){
     </Layout>
   );
 }
-
