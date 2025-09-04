@@ -22,6 +22,7 @@ Parameters:
   ConnectionArn:
     Type: String
     Description: CodeStar Connections ARN to GitHub (activate in console)
+    Default: arn:aws:codeconnections:us-east-1:326445141506:connection/be28e422-fb3e-4ddb-8784-c284517ea97e
 
 Resources:
   ArtifactBucket:
@@ -43,7 +44,7 @@ Resources:
         - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
         - arn:aws:iam::aws:policy/AdministratorAccess-AWSElasticBeanstalk
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - arn:aws:iam::aws:policy/AWSCodePipelineReadOnlyAccess
+        - arn:aws:iam::aws:policy/AWSCodePipeline_ReadOnlyAccess
       Policies:
         - PolicyName: CodeBuildInline
           PolicyDocument:

@@ -64,17 +64,17 @@ Resources:
   OpenAIKeyParam:
     Type: AWS::SSM::Parameter
     Properties:
-      Name: !Sub "/${ProjectName}/${Stage}/openai/api_key"
+      Name: "/openai/api_key"
       Type: String
-      Value: "REPLACE_ME"
+      Value: "sdfdsfdsfsdf"
       Tier: Standard
 
   BotApiSecretParam:
     Type: AWS::SSM::Parameter
     Properties:
-      Name: !Sub "/${ProjectName}/${Stage}/bot/secret"
+      Name: !Sub "/bot/secret"
       Type: String
-      Value: "REPLACE_ME_WITH_RANDOM"
+      Value: "dfdfdfdfdfdopwejnmfvpjnpinj"
       Tier: Standard
 
 Outputs:
