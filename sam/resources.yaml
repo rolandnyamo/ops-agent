@@ -82,7 +82,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${ProjectName}-${Stage}-bot-auth"
-      CodeUri: src
+      CodeUri: ../src
       Handler: handlers/auth/botAuth.handler
       Environment:
         Variables:
@@ -100,7 +100,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${ProjectName}-${Stage}-ask"
-      CodeUri: src
+      CodeUri: ../src
       Handler: handlers/ask.handler
       Events:
         PostQA:
@@ -134,7 +134,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${ProjectName}-${Stage}-ingestion"
-      CodeUri: src
+      CodeUri: ../src
       Handler: handlers/ingestion.handler
       Events:
         PostIngest:
@@ -163,7 +163,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${ProjectName}-${Stage}-upload-url"
-      CodeUri: src
+      CodeUri: ../src
       Handler: handlers/uploadUrl.handler
       Events:
         PostUploadUrl:
@@ -185,7 +185,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${ProjectName}-${Stage}-settings"
-      CodeUri: src
+      CodeUri: ../src
       Handler: handlers/settings.handler
       Events:
         GetSettings:
