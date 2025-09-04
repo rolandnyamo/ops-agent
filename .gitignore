@@ -6,3 +6,4 @@ coverage
 dev-data/
 .aws-sam/
 .next/
+.env.local
