@@ -45,6 +45,7 @@ Resources:
         - arn:aws:iam::aws:policy/AdministratorAccess-AWSElasticBeanstalk
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
         - arn:aws:iam::aws:policy/AWSCodePipeline_ReadOnlyAccess
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
       Policies:
         - PolicyName: CodeBuildInline
           PolicyDocument:
