@@ -26,8 +26,7 @@ Resources:
       AttributeDefinitions:
         - { AttributeName: PK, AttributeType: S }
         - { AttributeName: SK, AttributeType: S }
-        - { AttributeName: SK1, AttributeType: S }
-        - { AttributeName: SK2, AttributeType: S }
+
       KeySchema:
         - { AttributeName: PK, KeyType: HASH }
         - { AttributeName: SK, KeyType: RANGE }
@@ -47,8 +46,7 @@ Resources:
       AttributeDefinitions:
         - { AttributeName: PK, AttributeType: S }
         - { AttributeName: SK, AttributeType: S }
-        - { AttributeName: SK1, AttributeType: S }
-        - { AttributeName: SK2, AttributeType: S }
+
       KeySchema:
         - { AttributeName: PK, KeyType: HASH }
         - { AttributeName: SK, KeyType: RANGE }
