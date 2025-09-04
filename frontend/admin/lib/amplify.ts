@@ -9,7 +9,6 @@ export function ensureAmplifyConfigured(){
       Cognito: {
         userPoolId: cfg.userPoolId,
         userPoolClientId: cfg.userPoolWebClientId,
-        region: cfg.region,
         loginWith: { email: true },
       }
     }
