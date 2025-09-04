@@ -23,28 +23,43 @@ Resources:
     Properties:
       TableName: !Sub "${ProjectName}-${Stage}-docs"
       BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions: [ { AttributeName: doc_id, AttributeType: S } ]
-      KeySchema: [ { AttributeName: doc_id, KeyType: HASH } ]
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+        - { AttributeName: SK1, AttributeType: S }
+        - { AttributeName: SK2, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: Index-01
+          KeySchema:
+            - { AttributeName: SK, KeyType: HASH }
+            - { AttributeName: PK, KeyType: RANGE }
+          Projection:
+            ProjectionType: ALL
 
   SettingsTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub "${ProjectName}-${Stage}-settings"
       BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions: [ { AttributeName: key, AttributeType: S } ]
-      KeySchema: [ { AttributeName: key, KeyType: HASH } ]
-
-  QALogsTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: !Sub "${ProjectName}-${Stage}-qa-logs"
-      BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - { AttributeName: day, AttributeType: S }
-        - { AttributeName: ts, AttributeType: S }
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+        - { AttributeName: SK1, AttributeType: S }
+        - { AttributeName: SK2, AttributeType: S }
       KeySchema:
-        - { AttributeName: day, KeyType: HASH }
-        - { AttributeName: ts, KeyType: RANGE }
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: Index-01
+          KeySchema:
+            - { AttributeName: SK, KeyType: HASH }
+            - { AttributeName: PK, KeyType: RANGE }
+          Projection:
+            ProjectionType: ALL
+
 
   OpenAIKeyParam:
     Type: AWS::SSM::Parameter
@@ -52,6 +67,14 @@ Resources:
       Name: !Sub "/${ProjectName}/${Stage}/openai/api_key"
       Type: String
       Value: "REPLACE_ME"
+      Tier: Standard
+
+  BotApiSecretParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${ProjectName}/${Stage}/bot/secret"
+      Type: String
+      Value: "REPLACE_ME_WITH_RANDOM"
       Tier: Standard
 
 Outputs:
@@ -79,13 +102,9 @@ Outputs:
   SettingsTableArn:
     Value: !GetAtt SettingsTable.Arn
     Export: { Name: !Sub "${ProjectName}-${Stage}-SettingsTableArn" }
-  QALogsTableName:
-    Value: !Ref QALogsTable
-    Export: { Name: !Sub "${ProjectName}-${Stage}-QALogsTableName" }
-  QALogsTableArn:
-    Value: !GetAtt QALogsTable.Arn
-    Export: { Name: !Sub "${ProjectName}-${Stage}-QALogsTableArn" }
   OpenAIKeyParamName:
     Value: !Ref OpenAIKeyParam
     Export: { Name: !Sub "${ProjectName}-${Stage}-OpenAIKeyParamName" }
-
+  BotApiSecretParamName:
+    Value: !Ref BotApiSecretParam
+    Export: { Name: !Sub "${ProjectName}-${Stage}-BotApiSecretParamName" }

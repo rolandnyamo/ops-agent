@@ -1,6 +1,6 @@
-import crypto from 'node:crypto';
+const crypto = require('node:crypto');
 
-export const handler = async (event) => {
+exports.handler = async (event) => {
   const body = event?.body && typeof event.body === 'string' ? JSON.parse(event.body) : event?.body || {};
   const title = body?.title;
   if (!title) return { statusCode: 400, body: JSON.stringify({ message: 'title is required' }) };
@@ -10,4 +10,3 @@ export const handler = async (event) => {
 
   return { statusCode: 202, body: JSON.stringify({ ok: true, docId }) };
 };
-

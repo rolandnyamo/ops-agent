@@ -1,4 +1,4 @@
-export const handler = async (event) => {
+exports.handler = async (event) => {
   const body = event?.body && typeof event.body === 'string' ? JSON.parse(event.body) : event?.body || {};
   const q = body?.q;
   if (!q) return { statusCode: 400, body: JSON.stringify({ message: 'q is required' }) };
@@ -13,4 +13,3 @@ export const handler = async (event) => {
 
   return { statusCode: 200, body: JSON.stringify(response) };
 };
-

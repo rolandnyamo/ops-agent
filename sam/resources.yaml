@@ -18,6 +18,81 @@ Resources:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: !Ref Stage
+      CorsConfiguration:
+        AllowOrigins: ['*']
+        AllowMethods: ['GET','POST','OPTIONS']
+        AllowHeaders: ['*']
+      Auth:
+        Authorizers:
+          AdminCognitoAuth:
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+              audience:
+                - !Ref UserPoolClient
+            IdentitySource: "$request.header.Authorization"
+          BotLambdaAuth:
+            FunctionArn: !GetAtt BotAuthFn.Arn
+            AuthorizerPayloadFormatVersion: 2.0
+            EnableSimpleResponses: true
+            Identity:
+              Headers:
+                - X-Bot-Signature
+                - X-Bot-Timestamp
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${ProjectName}-${Stage}-admin"
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: admin-ui
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email, profile]
+      CallbackURLs: ["http://localhost:3000"]
+      LogoutURLs: ["http://localhost:3000"]
+      SupportedIdentityProviders: [COGNITO]
+
+  BotAuthFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-bot-auth"
+      CodeUri: src
+      Handler: handlers/auth/botAuth.handler
+      Environment:
+        Variables:
+          BOT_SECRET_PARAM: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-BotApiSecretParamName' }
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: '*'
+
+  BotAuthPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref BotAuthFn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*"
 
   AskFn:
     Type: AWS::Serverless::Function
@@ -32,6 +107,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /qa
             Method: POST
+            Auth:
+              Authorizer: BotLambdaAuth
       Environment:
         Variables:
           DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
@@ -63,6 +140,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /docs/ingest
             Method: POST
+            Auth:
+              Authorizer: AdminCognitoAuth
       Environment:
         Variables:
           DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
@@ -90,6 +169,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /docs/upload-url
             Method: POST
+            Auth:
+              Authorizer: AdminCognitoAuth
       Environment:
         Variables:
           RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
@@ -110,6 +191,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /settings
             Method: GET
+            Auth:
+              Authorizer: AdminCognitoAuth
       Environment:
         Variables:
           SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
@@ -123,4 +206,7 @@ Resources:
 Outputs:
   ApiEndpoint:
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
-
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
