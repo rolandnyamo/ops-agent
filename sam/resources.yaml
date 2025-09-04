@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: App resources (Lambdas, API, roles, env)
+
+Parameters:
+  ProjectName: { Type: String, Default: ops-agent }
+  Stage: { Type: String, Default: prod }
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    MemorySize: 512
+    Timeout: 30
+    Tracing: Active
+
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+
+  AskFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-ask"
+      CodeUri: src
+      Handler: handlers/ask.handler
+      Events:
+        PostQA:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /qa
+            Method: POST
+      Environment:
+        Variables:
+          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
+          SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
+          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:Scan
+              Resource:
+                - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
+                - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
+        - S3ReadPolicy:
+            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+
+  IngestionFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-ingestion"
+      CodeUri: src
+      Handler: handlers/ingestion.handler
+      Events:
+        PostIngest:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /docs/ingest
+            Method: POST
+      Environment:
+        Variables:
+          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
+          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
+        - S3WritePolicy:
+            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+
+  UploadUrlFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-upload-url"
+      CodeUri: src
+      Handler: handlers/uploadUrl.handler
+      Events:
+        PostUploadUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /docs/upload-url
+            Method: POST
+      Environment:
+        Variables:
+          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+      Policies:
+        - S3WritePolicy:
+            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+
+  SettingsFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-settings"
+      CodeUri: src
+      Handler: handlers/settings.handler
+      Events:
+        GetSettings:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /settings
+            Method: GET
+      Environment:
+        Variables:
+          SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
+
+Outputs:
+  ApiEndpoint:
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+

@@ -1,0 +1,56 @@
+openapi: 3.0.3
+info:
+  title: Docs-Grounded QA API
+  version: 0.1.0
+servers:
+  - url: https://api.example.com/prod
+paths:
+  /settings:
+    get:
+      operationId: getSettings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+  /docs/upload-url:
+    post:
+      operationId: createUploadUrl
+      requestBody:
+        required: false
+      responses:
+        '200': { description: OK }
+  /docs/ingest:
+    post:
+      operationId: ingestDoc
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                description: { type: string }
+                url: { type: string }
+                content: { type: string }
+              required: [title]
+      responses:
+        '202': { description: Accepted }
+  /qa:
+    post:
+      operationId: ask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                q: { type: string }
+              required: [q]
+      responses:
+        '200': { description: OK }
+

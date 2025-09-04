@@ -1,0 +1,10 @@
+{
+  "name": "ops-agent",
+  "private": true,
+  "version": "0.0.2",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "fmt": "echo format placeholder",
+    "test": "echo tests placeholder"
+  }
+}

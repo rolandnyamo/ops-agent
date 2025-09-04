@@ -1,0 +1,44 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Amplify Hosting for ops-agent admin UI (Next.js)
+
+Parameters:
+  AppName: { Type: String, Default: ops-agent-admin }
+  GitHubToken: { Type: String, NoEcho: true, Description: GitHub personal access token (classic) with repo read }
+  GitHubOwner: { Type: String }
+  GitHubRepo: { Type: String }
+  GitBranch: { Type: String, Default: main }
+
+Resources:
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Ref AppName
+      Repository: !Sub "https://github.com/${GitHubOwner}/${GitHubRepo}"
+      OauthToken: !Ref GitHubToken
+      BuildSpec: |
+        version: 1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - npm ci --prefix frontend/admin
+            build:
+              commands:
+                - npm run build --prefix frontend/admin
+          artifacts:
+            baseDirectory: frontend/admin/.next
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - frontend/admin/node_modules/**/*
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: !Ref GitBranch
+
+Outputs:
+  AmplifyAppId: { Value: !GetAtt AmplifyApp.AppId }
+  AmplifyDefaultDomain: { Value: !GetAtt AmplifyApp.DefaultDomain }
+

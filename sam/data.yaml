@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Data layer for ops-agent (S3, DynamoDB, SSM)
+
+Parameters:
+  ProjectName: { Type: String, Default: ops-agent }
+  Stage: { Type: String, Default: prod }
+
+Resources:
+  RawBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-${Stage}-raw-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration: { Status: Enabled }
+
+  VectorBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-${Stage}-vectors-${AWS::AccountId}-${AWS::Region}"
+
+  DocsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-${Stage}-docs"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [ { AttributeName: doc_id, AttributeType: S } ]
+      KeySchema: [ { AttributeName: doc_id, KeyType: HASH } ]
+
+  SettingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-${Stage}-settings"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [ { AttributeName: key, AttributeType: S } ]
+      KeySchema: [ { AttributeName: key, KeyType: HASH } ]
+
+  QALogsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-${Stage}-qa-logs"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: day, AttributeType: S }
+        - { AttributeName: ts, AttributeType: S }
+      KeySchema:
+        - { AttributeName: day, KeyType: HASH }
+        - { AttributeName: ts, KeyType: RANGE }
+
+  OpenAIKeyParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${ProjectName}/${Stage}/openai/api_key"
+      Type: String
+      Value: "REPLACE_ME"
+      Tier: Standard
+
+Outputs:
+  RawBucketName:
+    Value: !Ref RawBucket
+    Export: { Name: !Sub "${ProjectName}-${Stage}-RawBucketName" }
+  RawBucketArn:
+    Value: !GetAtt RawBucket.Arn
+    Export: { Name: !Sub "${ProjectName}-${Stage}-RawBucketArn" }
+  VectorBucketName:
+    Value: !Ref VectorBucket
+    Export: { Name: !Sub "${ProjectName}-${Stage}-VectorBucketName" }
+  VectorBucketArn:
+    Value: !GetAtt VectorBucket.Arn
+    Export: { Name: !Sub "${ProjectName}-${Stage}-VectorBucketArn" }
+  DocsTableName:
+    Value: !Ref DocsTable
+    Export: { Name: !Sub "${ProjectName}-${Stage}-DocsTableName" }
+  DocsTableArn:
+    Value: !GetAtt DocsTable.Arn
+    Export: { Name: !Sub "${ProjectName}-${Stage}-DocsTableArn" }
+  SettingsTableName:
+    Value: !Ref SettingsTable
+    Export: { Name: !Sub "${ProjectName}-${Stage}-SettingsTableName" }
+  SettingsTableArn:
+    Value: !GetAtt SettingsTable.Arn
+    Export: { Name: !Sub "${ProjectName}-${Stage}-SettingsTableArn" }
+  QALogsTableName:
+    Value: !Ref QALogsTable
+    Export: { Name: !Sub "${ProjectName}-${Stage}-QALogsTableName" }
+  QALogsTableArn:
+    Value: !GetAtt QALogsTable.Arn
+    Export: { Name: !Sub "${ProjectName}-${Stage}-QALogsTableArn" }
+  OpenAIKeyParamName:
+    Value: !Ref OpenAIKeyParam
+    Export: { Name: !Sub "${ProjectName}-${Stage}-OpenAIKeyParamName" }
+
