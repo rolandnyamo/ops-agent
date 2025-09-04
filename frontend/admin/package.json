@@ -4,8 +4,9 @@
   "version": "0.0.1",
   "scripts": {
     "dev": "next dev",
-    "build": "next build && next export",
-    "start": "next start"
+    "build": "next build",
+    "start": "npx --yes serve@latest -s out -l 3000",
+    "preview": "npx --yes serve@latest -s out -l 3000"
   },
   "dependencies": {
     "@aws-amplify/ui-react": "^6.1.10",
