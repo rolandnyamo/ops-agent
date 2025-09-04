@@ -37,15 +37,14 @@ Resources:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
-            Principal: { Service: codebuild.amazonaws.com }
-            Action: sts:AssumeRole
+          - Action:
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
-        - arn:aws:iam::aws:policy/AdministratorAccess-AWSElasticBeanstalk
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - arn:aws:iam::aws:policy/AWSCodePipeline_ReadOnlyAccess
-        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/AdministratorAccess
       Policies:
         - PolicyName: CodeBuildInline
           PolicyDocument:
@@ -71,6 +70,7 @@ Resources:
         EnvironmentVariables:
           - { Name: DATA_STACK, Value: !Sub "${ProjectName}-data" }
           - { Name: APP_STACK, Value: !Sub "${ProjectName}-app" }
+          - { Name: PACKAGE_BUCKET, Value: !Ref ArtifactBucket }
       Source:
         Type: CODEPIPELINE
         BuildSpec: |
@@ -84,8 +84,10 @@ Resources:
                 - set -e
                 - echo Deploy data stack
                 - aws cloudformation deploy --template-file sam/data.yaml --stack-name "$DATA_STACK" --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
+                - echo Package SAM resources to S3 bucket "$PACKAGE_BUCKET"
+                - aws cloudformation package --template-file sam/resources.yaml --s3-bucket "$PACKAGE_BUCKET" --output-template-file packaged-resources.yaml
                 - echo Deploy app/resources stack
-                - aws cloudformation deploy --template-file sam/resources.yaml --stack-name "$APP_STACK" --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
+                - aws cloudformation deploy --template-file packaged-resources.yaml --stack-name "$APP_STACK" --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
           artifacts:
             files:
               - '**/*'
@@ -94,22 +96,66 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
-          - Effect: Allow
-            Principal: { Service: codepipeline.amazonaws.com }
-            Action: sts:AssumeRole
+          - Action:
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+      Path: /
       Policies:
-        - PolicyName: PipelineAccess
+        - PolicyName: CodePipelineAccess
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
-                  - s3:*
-                  - codebuild:*
-                  - codestar-connections:UseConnection
-                Resource: '*'
+                  - "iam:PassRole"
+                  - "lambda:InvokeFunction"
+                  - "lambda:ListFunctions"
+                  - "lambda:InvokeAsyc"
+                Resource: "*"
+        - PolicyName: CodePipelineCodeAndArtifactsS3Bucket
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "s3:*"
+                Resource: !Sub "arn:aws:s3:::${ArtifactBucket}/*"
+        - PolicyName: CodestarConnectionAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "codestar-connections:*"
+                Resource: !Sub "${ConnectionArn}"
+        - PolicyName: CodePipelineCodeBuildAndCloudformationAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "codebuild:StartBuild"
+                  - "codebuild:BatchGetBuilds"
+                Resource:
+                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${CodeBuildProject}"
+              - Effect: Allow
+                Action:
+                  - "cloudformation:CreateStack"
+                  - "cloudformation:DescribeStacks"
+                  - "cloudformation:DeleteStack"
+                  - "cloudformation:UpdateStack"
+                  - "cloudformation:CreateChangeSet"
+                  - "cloudformation:ExecuteChangeSet"
+                  - "cloudformation:DeleteChangeSet"
+                  - "cloudformation:DescribeChangeSet"
+                  - "cloudformation:SetStackPolicy"
+                  - "cloudformation:SetStackPolicy"
+                  - "cloudformation:ValidateTemplate"
+                Resource:
+                  - "*"
 
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -153,4 +199,3 @@ Resources:
 Outputs:
   PipelineNameOut: { Value: !Ref Pipeline }
   ArtifactBucketOut: { Value: !Ref ArtifactBucket }
-
