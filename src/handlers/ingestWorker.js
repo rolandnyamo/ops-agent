@@ -22,9 +22,9 @@ function chunkText(text, maxChars=3500, overlap=300){
 }
 async function readObject(bucket, key){
   const res = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-  const body = await res.Body.transformToString('utf8');
   const contentType = res.ContentType || 'application/octet-stream';
-  return { body, contentType };
+  const buffer = Buffer.from(await res.Body.transformToByteArray());
+  return { buffer, contentType };
 }
 async function setStatus(docId, status, extra={}){
   const names = { '#u':'updatedAt', '#s':'status' };
@@ -51,14 +51,15 @@ async function embedChunks(chunks){
   return out;
 }
 
-async function storeVectorsS3(docId, vectors, chunks){
+async function storeVectorsS3(docId, vectors, chunks, docMeta){
   if (!VEC_BUCKET) return;
-  const lines = vectors.map((v, i) => JSON.stringify({ docId, chunkIdx: i, vector: v, text: chunks[i] }));
+  const meta = docMeta ? { docId, title: docMeta.title, category: docMeta.category, audience: docMeta.audience, year: docMeta.year, version: docMeta.version } : { docId };
+  const lines = vectors.map((v, i) => JSON.stringify({ ...meta, chunkIdx: i, vector: v, text: chunks[i] }));
   const key = `vectors/${docId}.jsonl`;
   await s3.send(new PutObjectCommand({ Bucket: VEC_BUCKET, Key: key, Body: lines.join('\n'), ContentType: 'application/x-ndjson' }));
 }
 
-async function storeVectorsS3Vectors(docId, vectors, chunks){
+async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
   if (!VEC_BUCKET) throw new Error('VECTOR_BUCKET not set');
   if (!VEC_INDEX) throw new Error('VECTOR_INDEX not set');
   const client = new S3VectorsClient({});
@@ -66,15 +67,16 @@ async function storeVectorsS3Vectors(docId, vectors, chunks){
     vector,
     metadata: {
       docId,
+      title: docMeta?.title,
+      category: docMeta?.category,
+      audience: docMeta?.audience,
+      year: docMeta?.year,
+      version: docMeta?.version,
       chunkIdx: i,
-    }
+    },
+    text: chunks[i]
   }));
-  await client.send(new PutVectorsCommand({ 
-    vectorBucketName: VEC_BUCKET, 
-    indexName: VEC_INDEX,
-    indexArn: 'arn:aws:s3vectors:us-east-1:326445141506:bucket/ops-embeddings/index/docs',
-    vectors: items 
-  }));
+  await client.send(new PutVectorsCommand({ bucket: VEC_BUCKET, index: VEC_INDEX, vectors: items }));
 }
 
 exports.handler = async (event) => {
@@ -88,14 +90,22 @@ exports.handler = async (event) => {
 
     await setStatus(docId, 'PROCESSING');
 
-    const { body, contentType } = await readObject(bucket, key);
+    const { buffer, contentType } = await readObject(bucket, key);
     let text;
     if ((contentType || '').includes('text/html') || key.endsWith('.html') || key.endsWith('.htm')) {
-      text = textFromHtml(body);
+      text = textFromHtml(buffer.toString('utf8'));
     } else if ((contentType || '').startsWith('text/') || key.endsWith('.txt') || key.endsWith('.md')) {
-      text = body;
+      text = buffer.toString('utf8');
+    } else if (key.endsWith('.pdf') || (contentType||'').includes('application/pdf')){
+      const pdfParse = require('pdf-parse');
+      const res = await pdfParse(buffer);
+      text = String(res.text || '').trim();
+    } else if (key.endsWith('.docx') || (contentType||'').includes('application/vnd.openxmlformats-officedocument.wordprocessingml.document')){
+      const mammoth = require('mammoth');
+      const { value } = await mammoth.extractRawText({ buffer });
+      text = String(value||'').trim();
     } else {
-      await setStatus(docId, 'FAILED', { error: 'Unsupported content type for v1' });
+      await setStatus(docId, 'FAILED', { error: `Unsupported content type: ${contentType}` });
       return { statusCode: 200 };
     }
 
@@ -104,11 +114,17 @@ exports.handler = async (event) => {
     await s3.send(new PutObjectCommand({ Bucket: RAW_BUCKET, Key: `chunks/${docId}/chunks.jsonl`, Body: chunkLines.join('\n'), ContentType: 'application/x-ndjson' }));
 
     const vectors = await embedChunks(chunks);
+    // Fetch doc metadata for vector metadata
+    let docMeta = null;
+    try {
+      const dres = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:'DOC' }) }));
+      docMeta = dres.Item ? unmarshall(dres.Item) : null;
+    } catch {}
 
     if (VEC_MODE === 's3vectors') {
-      await storeVectorsS3Vectors(docId, vectors, chunks);
+      await storeVectorsS3Vectors(docId, vectors, chunks, docMeta);
     } else if (VEC_MODE === 's3') {
-      await storeVectorsS3(docId, vectors, chunks);
+      await storeVectorsS3(docId, vectors, chunks, docMeta);
     } else {
       console.log('Unknown VECTOR_MODE:', VEC_MODE);
     }

@@ -22,6 +22,10 @@ Parameters:
     Type: String
     Default: ops-embeddings
     Description: Name of the S3 Vectors bucket (created manually)
+  RawBucketName:
+    Type: String
+    Default: ops-agent-prod-raw-326445141506-us-east-1
+    Description: Name of the S3 Raw bucket (created manually)
   VectorIndexName:
     Type: String
     Default: docs
@@ -30,9 +34,20 @@ Parameters:
 Globals:
   Function:
     Runtime: nodejs22.x
+    Architectures:
+      - arm64
     MemorySize: 512
     Timeout: 30
     Tracing: Active
+    Environment:
+      Variables:
+        DOCS_TABLE: 'ops-agent-prod-docs'  # This will be overridden by the actual import value in the function definition
+        SETTINGS_TABLE: 'ops-agent-prod-settings'  # This will be overridden by the actual import value in the function definition
+        RAW_BUCKET: 'ops-agent-prod-raw-326445141506-us-east-1'  # This will be overridden by the actual import value in the function definition
+        OPENAI_API_KEY: 'TEST_OPENAI_KEY_8e9a0a5f2fbd4f8a'  # This will be overridden by the actual import value in the function definition
+        VECTOR_BUCKET: 'ops-embeddings'  # This will be overridden by the actual import value in the function definition
+        VECTOR_INDEX: 'docs'  # This will be overridden by the actual import value in the function definition
+        VECTOR_MODE: s3vectors
 
 Resources:
   HttpApi:
@@ -124,19 +139,32 @@ Resources:
             Method: POST
       Environment:
         Variables:
-          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
-          SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
-          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
-          OPENAI_API_KEY: !Ref OpenAIApiKey
+          var1: value1
       Policies:
         - Statement:
             - Effect: Allow
               Action:
-                - dynamodb:*
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:Scan
+              Resource:
+                - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
+                - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
+        - S3ReadPolicy:
+            BucketName: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:*
+                - s3vectors:*
               Resource:
                 - "*"
-        - S3ReadPolicy:
-            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3vectors:*
+              Resource:
+                - "*"
 
   IngestionFn:
     Type: AWS::Serverless::Function
@@ -153,8 +181,7 @@ Resources:
             Method: POST
       Environment:
         Variables:
-          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
-          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+          var1: value1
       Policies:
         - Statement:
             - Effect: Allow
@@ -162,7 +189,7 @@ Resources:
                 - dynamodb:*
               Resource: "*"
         - S3WritePolicy:
-            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+            BucketName: "*"
 
   UploadUrlFn:
     Type: AWS::Serverless::Function
@@ -179,10 +206,10 @@ Resources:
             Method: POST
       Environment:
         Variables:
-          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+          var1: value1
       Policies:
         - S3WritePolicy:
-            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+            BucketName: "*"
 
   IngestionWorkerFn:
     Type: AWS::Serverless::Function
@@ -194,23 +221,18 @@ Resources:
       MemorySize: 1024
       Environment:
         Variables:
-          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
-          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
-          VECTOR_BUCKET: !Ref VectorBucketName
-          VECTOR_INDEX: !Ref VectorIndexName
-          VECTOR_MODE: s3vectors
-          OPENAI_API_KEY: !Ref OpenAIApiKey
+          var1: value1
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - dynamodb:UpdateItem
                 - dynamodb:GetItem
-              Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
+              Resource: '*'
         - S3ReadPolicy:
-            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+            BucketName: '*'
         - S3WritePolicy:
-            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+            BucketName: '*'
         - Statement:
             - Effect: Allow
               Action:
@@ -230,7 +252,7 @@ Resources:
         detail-type: ["Object Created"]
         detail:
           bucket:
-            name: [ !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' } ]
+            name: [ !Ref RawBucketName ]
           object:
             key:
               - prefix: "raw/"
@@ -254,8 +276,7 @@ Resources:
       Handler: handlers/docs.handler
       Environment:
         Variables:
-          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
-          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+          var1: value1
       Policies:
         - Statement:
             - Effect: Allow
@@ -263,7 +284,19 @@ Resources:
                 - dynamodb:*
               Resource: "*"
         - S3CrudPolicy:
-            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+            BucketName: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:*
+              Resource:
+                - "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3vectors:DeleteVectors
+              Resource:
+                - "*"
       Events:
         ListDocs:
           Type: HttpApi

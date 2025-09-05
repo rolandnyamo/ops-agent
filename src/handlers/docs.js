@@ -90,7 +90,17 @@ exports.handler = async (event) => {
   }
 
   if (method === 'DELETE' && docId) {
-    // Delete raw objects under raw/{docId}/ and the item
+    // Mark DELETING (best-effort)
+    try {
+      await ddb.send(new UpdateItemCommand({
+        TableName: TABLE,
+        Key: marshall({ PK:`DOC#${docId}`, SK:'DOC' }),
+        UpdateExpression: 'SET #s = :s, #u = :u',
+        ExpressionAttributeNames: { '#s':'status', '#u':'updatedAt' },
+        ExpressionAttributeValues: marshall({ ':s':'DELETING', ':u': new Date().toISOString() })
+      }));
+    } catch {}
+    // Delete raw objects under raw/{docId}/ and chunks/{docId}/
     if (BUCKET) {
       for (const prefix of [`raw/${docId}/`, `chunks/${docId}/`]){
         const listed = await ddbCatch(() => s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix })));

@@ -38,6 +38,12 @@ Frontend (Next.js):
   - `NEXT_PUBLIC_COGNITO_USER_POOL_WEB_CLIENT_ID=...` (optional)
 - Run: `npm run dev` (or `npm run build && npm run start`)
 
+OpenAI key from your computer env:
+- Export in your shell before starting dev: `export OPENAI_API_KEY=sk-...`
+- Then run: `npm run dev` OR `npm run dev:api`
+- The script passes it into SAM via `--parameter-overrides OpenAIApiKey=$OPENAI_API_KEY`
+- Alternatively, set it in `sam/local-env.json` per-function (AskFn/IngestionWorkerFn), but the template parameter is recommended.
+
 ## Next steps
 
 - Flesh out handlers to use DynamoDB/S3 (and S3 Vectors later)
