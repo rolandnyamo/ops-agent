@@ -4,8 +4,8 @@ const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 
 const ddb = new DynamoDBClient({});
 const s3 = new S3Client({});
-const TABLE = process.env.DOCS_TABLE;
-const BUCKET = process.env.RAW_BUCKET;
+const TABLE = process.env.DOCS_TABLE || 'ops-agent-prod-docs';
+const BUCKET = process.env.RAW_BUCKET || 'ops-agent-prod-raw-326445141506-us-east-1';
 
 function ok(status, body) { return { statusCode: status, body: JSON.stringify(body) }; }
 function parseBody(event){
@@ -56,6 +56,7 @@ exports.handler = async (event) => {
       ExpressionAttributeValues: marshall({ ':sk': 'DOC' }),
       Limit: limit,
     };
+    console.log('Querying docs with params:', JSON.stringify(params));
     const res = await ddb.send(new QueryCommand(params));
     const items = (res.Items || []).map(unmarshall);
     return ok(200, { items, count: items.length, nextToken: res.LastEvaluatedKey ? Buffer.from(JSON.stringify(res.LastEvaluatedKey)).toString('base64') : null });

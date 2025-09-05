@@ -34,7 +34,7 @@ Resources:
       CorsConfiguration:
         AllowOrigins: ['*']
         AllowMethods: ['GET','POST','OPTIONS']
-        AllowHeaders: ['authorization','Authorization','content-type','x-bot-signature','x-bot-timestamp']
+        AllowHeaders: ['authorization','content-type','x-bot-signature','x-bot-timestamp']
       Auth:
         Authorizers:
           AdminCognitoAuth:
