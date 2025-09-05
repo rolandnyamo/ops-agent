@@ -1,23 +1,30 @@
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const { generateText } = require('./helpers/openai');
 
 function parse(event){
   try { return event && event.body ? (typeof event.body === 'string' ? JSON.parse(event.body) : event.body) : {}; } catch { return {}; }
 }
 
 async function openaiResponses(prompt, system){
-  if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not set');
-  const body = {
+  const result = await generateText({
     model: 'gpt-4o-mini',
-    input: [{ role: 'system', content: system || 'You return only valid minified JSON.' }, { role: 'user', content: prompt }],
-    response_format: { type: 'json_object' }
-  };
-  const res = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` }, body: JSON.stringify(body)
+    input: [
+      { role: 'system', content: system || 'You return only valid minified JSON.' },
+      { role: 'user', content: prompt }
+    ],
+    format: 'json'  // Use the correct format for JSON responses
   });
-  if (!res.ok) throw new Error(`OpenAI Responses ${res.status}`);
-  const json = await res.json();
-  const content = json?.output_text || json?.output?.[0]?.content || json?.choices?.[0]?.message?.content || '';
-  let data; try { data = typeof content === 'string' ? JSON.parse(content) : content; } catch { data = {}; }
+  
+  if (!result.success) {
+    console.error('OpenAI error:', result.error);
+    throw new Error('OpenAI request failed');
+  }
+  
+  let data;
+  try {
+    data = typeof result.text === 'string' ? JSON.parse(result.text) : result.text;
+  } catch {
+    data = {};
+  }
   return data;
 }
 
@@ -67,4 +74,3 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ message: 'infer failed' }) };
   }
 };
-

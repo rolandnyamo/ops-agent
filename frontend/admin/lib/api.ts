@@ -117,3 +117,25 @@ export async function ask(q: string, agentId?: string, filter?: string){
   if (!res.ok) throw new Error(`qa ${res.status}`);
   return res.json() as Promise<{ answer: string; grounded: boolean; confidence: number; citations: Array<{docId:string; chunk:number; score:number}> } >;
 }
+
+// Agents API
+export type AgentSummary = { agentId: string };
+export type AgentSettings = Settings & { agentId?: string; notes?: string };
+
+export async function listAgents(){
+  const res = await fetch(`${cfg.apiBase}/agents`, { headers: { ...(await authHeader()) } });
+  if (!res.ok) throw new Error(`list agents ${res.status}`);
+  return res.json() as Promise<{ items: AgentSummary[] }>;
+}
+
+export async function getAgent(agentId: string){
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}`, { headers: { ...(await authHeader()) } });
+  if (!res.ok) throw new Error(`get agent ${res.status}`);
+  return res.json() as Promise<AgentSettings>;
+}
+
+export async function createAgent(useCase?: string){
+  const res = await fetch(`${cfg.apiBase}/agents`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ useCase }) });
+  if (!res.ok) throw new Error(`create agent ${res.status}`);
+  return res.json() as Promise<{ agentId: string }>;
+}

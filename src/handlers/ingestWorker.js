@@ -11,6 +11,8 @@ const VEC_MODE = process.env.VECTOR_MODE || 's3vectors';
 const VEC_INDEX = process.env.VECTOR_INDEX || 'docs';
 const TABLE = process.env.DOCS_TABLE;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OpenAI = require('openai');
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 function decodeKey(key){ return decodeURIComponent(key.replace(/\+/g,'%20')); }
 function textFromHtml(html){ return String(html).replace(/<script[\s\S]*?<\/script>/gi,'').replace(/<style[\s\S]*?<\/style>/gi,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(); }
@@ -36,19 +38,9 @@ async function setStatus(docId, agentId, status, extra={}){
 async function embedChunks(chunks){
   if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not set');
   const model = 'text-embedding-3-small';
-  const out = [];
-  for (const text of chunks){
-    const resp = await fetch('https://api.openai.com/v1/embeddings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` },
-      body: JSON.stringify({ input: text, model })
-    });
-    if (!resp.ok) throw new Error(`OpenAI ${resp.status}`);
-    const json = await resp.json();
-    const vec = json.data?.[0]?.embedding;
-    out.push(vec);
-  }
-  return out;
+  // Batch for efficiency
+  const resp = await openai.embeddings.create({ model, input: chunks });
+  return (resp?.data || []).map(d => d.embedding);
 }
 
 async function storeVectorsS3(docId, vectors, chunks, docMeta){

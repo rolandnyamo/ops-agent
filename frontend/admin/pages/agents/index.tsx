@@ -1,34 +1,31 @@
-import Layout from '../components/Layout';
+import Layout from '../../components/Layout';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
-import { createAgent, getAgent, listAgents, type AgentSummary, type AgentSettings } from '../lib/api';
+import { useEffect, useState } from 'react';
+import { createAgent, getAgent, listAgents } from '../../lib/api';
 import { useRouter } from 'next/router';
 
-type Card = { agentId: string; name: string; desc: string };
-
-export default function Home(){
+export default function AgentsHome(){
   const router = useRouter();
-  const [items, setItems] = useState<Card[]>([]);
+  const [items, setItems] = useState<Array<{agentId:string; name:string; desc:string}>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string|undefined>();
   const [creating, setCreating] = useState(false);
   const [useCase, setUseCase] = useState('');
 
-  useEffect(() => {
-    (async () => {
+  useEffect(()=>{
+    (async()=>{
       setLoading(true); setError(undefined);
       try{
         const res = await listAgents();
-        const ids = res.items.map(i=>i.agentId);
-        const details = await Promise.all(ids.map(async id => {
-          try { const s = await getAgent(id); return { agentId: id, name: s.agentName || id, desc: s?.notes || '' }; }
-          catch { return { agentId: id, name: id, desc: '' }; }
+        const details = await Promise.all(res.items.map(async it => {
+          try{ const s = await getAgent(it.agentId); return { agentId: it.agentId, name: s.agentName || it.agentId, desc: s?.notes || '' }; }
+          catch{ return { agentId: it.agentId, name: it.agentId, desc: '' }; }
         }));
         setItems(details);
       }catch(e:any){ setError('Failed to load agents'); }
       finally{ setLoading(false); }
     })();
-  }, []);
+  },[]);
 
   async function onCreate(){
     if (creating) return;
@@ -44,9 +41,7 @@ export default function Home(){
         <div className="card">
           <h3 className="card-title">Your Agents</h3>
           {error && <div className="chip" style={{borderColor:'#744'}}>{error}</div>}
-          {loading ? (
-            <div className="muted">Loading…</div>
-          ) : (
+          {loading ? <div className="muted">Loading…</div> : (
             <div className="grid cols-2" style={{marginTop:8}}>
               {items.map(a => (
                 <Link key={a.agentId} href={`/agents/${a.agentId}`} className="card" style={{display:'block'}}>
@@ -64,12 +59,10 @@ export default function Home(){
             </div>
           )}
         </div>
-
         <div className="card">
           <h3 className="card-title">Add Agent</h3>
           <p className="muted">Briefly describe the agent’s use case. We’ll prefill settings.</p>
-          <textarea className="textarea" rows={5} placeholder="e.g., A school information assistant helping students and parents with admissions, financial aid, housing, and key deadlines."
-            value={useCase} onChange={e=>setUseCase(e.target.value)} />
+          <textarea className="textarea" rows={5} value={useCase} onChange={e=>setUseCase(e.target.value)} placeholder="Describe the use case"/>
           <div className="row" style={{marginTop:10}}>
             <button className="btn" onClick={onCreate} disabled={creating}>Create Agent</button>
             <div className="muted mini">You can edit settings later.</div>
@@ -79,3 +72,4 @@ export default function Home(){
     </Layout>
   );
 }
+

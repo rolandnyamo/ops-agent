@@ -5,16 +5,14 @@ import { useAuthenticator } from '@aws-amplify/ui-react';
 import { useAgent } from '../lib/agent';
 
 const tabs = [
-  { href: '/', label: 'Dashboard' },
-  { href: '/setup', label: 'Setup' },
-  { href: '/sources', label: 'My Sources' },
+  { href: '/', label: 'Agents' },
   { href: '/bot', label: 'Bot' },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }){
   const { pathname } = useRouter();
   const { signOut, user } = useAuthenticator((context) => [context.user]);
-  const { agentId, agents, setAgentId } = useAgent();
+  // Route-based agents; remove global dropdown
   return (
     <div>
       <nav className="nav">
@@ -26,9 +24,6 @@ export default function Layout({ children }: { children: React.ReactNode }){
             ))}
           </div>
           <div style={{marginLeft:'auto'}} className="row">
-            <select className="select" value={agentId} onChange={(e)=>setAgentId(e.target.value)}>
-              {[agentId, ...agents.filter(a=>a!==agentId)].map(id => <option key={id} value={id}>{id}</option>)}
-            </select>
             <div className="pill mini">{user?.signInDetails?.loginId || 'signed in'}</div>
             <button className="btn ghost" onClick={signOut}>Sign out</button>
           </div>
@@ -37,7 +32,7 @@ export default function Layout({ children }: { children: React.ReactNode }){
       <header className="hero">
         <div className="container">
           <h1 style={{margin:'18px 0 6px 0'}}>Admin</h1>
-          <div className="muted">Create and managed your AI Agents.</div>
+          <div className="muted">Create and manage your AI Agents.</div>
         </div>
       </header>
       <main className="container" style={{paddingTop:18}}>

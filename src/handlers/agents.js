@@ -1,29 +1,49 @@
 const { DynamoDBClient, PutItemCommand, GetItemCommand, QueryCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const crypto = require('node:crypto');
+const { z } = require('zod');
+const { generateJSON } = require('./helpers/openai');
 
 const ddb = new DynamoDBClient({});
 const TABLE = process.env.SETTINGS_TABLE;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+const SettingsEvent = z.object({
+  agentName: z.string().default('My Agent'),
+  confidenceThreshold: z.number().min(0.3).max(0.7).default(0.45),
+  fallbackMessage: z.string().default('Sorry, I could not find this in the documentation.'),
+  organizationType: z.string().default(''),
+  categories: z.array(z.string()).default([]),
+  audiences: z.array(z.string()).default(['All']),
+  notes: z.string().default(''),
+});
 
 function ok(status, body){ return { statusCode: status, body: JSON.stringify(body) }; }
 function parse(event){ try { return event?.body ? (typeof event.body==='string'?JSON.parse(event.body):event.body) : {}; } catch { return {}; } }
 
 async function inferSettings(useCase){
-  if (!OPENAI_API_KEY || !useCase) return null;
-  const body = {
-    model: 'gpt-4o-mini',
-    input: [
-      { role: 'system', content: 'You return only valid minified JSON.' },
-      { role: 'user', content: `Given this use case, propose JSON with: agentName, confidenceThreshold (0.3..0.7), fallbackMessage (neutral), organizationType, categories (4-7), audiences, notes.\nUSE_CASE:\n${String(useCase).slice(0,4000)}` }
-    ],
-    response_format: { type: 'json_object' }
-  };
-  const res = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` }, body: JSON.stringify(body) });
-  if (!res.ok) return null;
-  const json = await res.json();
-  const content = json?.output_text || json?.choices?.[0]?.message?.content || '';
-  try { return JSON.parse(content); } catch { return null; }
+  if (!useCase) return null;
+  
+  const input = [
+    { role: 'system', content: 'You are an AI assistant that extracts agent settings from use case descriptions. Return only valid JSON matching the required schema.' },
+    { 
+      role: 'user', 
+      content: `Given this use case, propose JSON with: agentName, confidenceThreshold (0.3..0.7), fallbackMessage (neutral), organizationType, categories (4-7), audiences, notes.\n\nUSE_CASE:\n${String(useCase).slice(0,4000)}` 
+    }
+  ];
+
+  try {
+    const result = await generateJSON({
+      model: 'gpt-4o-mini',
+      input,
+      schema: SettingsEvent,
+      schemaName: 'settings'
+    });
+    
+    return result.success ? result.parsed : null;
+  } catch (error) {
+    console.error('Error inferring settings:', error);
+    return null;
+  }
 }
 
 exports.handler = async (event) => {
@@ -61,4 +81,3 @@ exports.handler = async (event) => {
 
   return ok(405, { message: 'Method Not Allowed' });
 };
-

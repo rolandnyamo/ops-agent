@@ -334,8 +334,7 @@ Resources:
       Handler: handlers/agents.handler
       Environment:
         Variables:
-          SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
-          OPENAI_API_KEY: !Ref OpenAIApiKey
+          var1: value1
       Policies:
         - Statement:
             - Effect: Allow
@@ -402,7 +401,7 @@ Resources:
             Method: PUT
       Environment:
         Variables:
-          SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
+          var1: value1
       Policies:
         - Statement:
             - Effect: Allow
