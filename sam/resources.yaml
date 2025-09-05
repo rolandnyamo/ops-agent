@@ -18,6 +18,14 @@ Parameters:
     Default: 'true'
     AllowedValues: ['true','false']
     Description: Toggle API authorizers (set to 'false' for local SAM testing)
+  VectorBucketName:
+    Type: String
+    Default: ops-embeddings
+    Description: Name of the S3 Vectors bucket (created manually)
+  VectorIndexName:
+    Type: String
+    Default: docs
+    Description: S3 Vectors index name
 
 Globals:
   Function:
@@ -176,6 +184,68 @@ Resources:
       Policies:
         - S3WritePolicy:
             BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+
+  IngestionWorkerFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-ingest-worker"
+      CodeUri: ../src
+      Handler: handlers/ingestWorker.handler
+      Timeout: 180
+      MemorySize: 1024
+      Environment:
+        Variables:
+          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
+          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+          VECTOR_BUCKET: !Ref VectorBucketName
+          VECTOR_INDEX: !Ref VectorIndexName
+          VECTOR_MODE: s3
+          OPENAI_API_KEY: !Ref OpenAIApiKey
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+                - dynamodb:GetItem
+              Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
+        - S3ReadPolicy:
+            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+        - S3WritePolicy:
+            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:DeleteObject
+                - s3:ListBucket
+              Resource:
+                - !Sub "arn:aws:s3:::${VectorBucketName}"
+                - !Sub "arn:aws:s3:::${VectorBucketName}/*"
+
+  S3PutRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-${Stage}-raw-objectcreated"
+      EventPattern:
+        source: ["aws.s3"]
+        detail-type: ["Object Created"]
+        detail:
+          bucket:
+            name: [ !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' } ]
+          object:
+            key:
+              - prefix: "raw/"
+      Targets:
+        - Arn: !GetAtt IngestionWorkerFn.Arn
+          Id: IngestionWorkerFnTarget
+
+  IngestionWorkerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref IngestionWorkerFn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt S3PutRule.Arn
 
   DocsFn:
     Type: AWS::Serverless::Function

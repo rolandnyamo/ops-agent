@@ -15,6 +15,10 @@ exports.handler = async (event) => {
   const body = parse(event);
   const filename = (body.filename || 'upload.bin').replace(/[^A-Za-z0-9._-]/g, '_');
   const contentType = body.contentType || 'application/octet-stream';
+  const allow = ['text/plain','text/html','application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+  if (!allow.includes(contentType)) {
+    return { statusCode: 400, body: JSON.stringify({ message: `Unsupported contentType ${contentType}` }) };
+  }
   const docId = (body.docId && String(body.docId)) || crypto.randomUUID();
   const key = `raw/${docId}/${filename}`;
   const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });

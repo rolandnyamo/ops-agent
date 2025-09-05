@@ -20,6 +20,13 @@ export default function Sources(){
     finally { setLoading(false); }
   }
   useEffect(()=>{ refresh(); },[]);
+  useEffect(()=>{
+    const id = setInterval(()=>{
+      const hasActive = items.some(i => (i.status==='UPLOADED' || i.status==='PROCESSING'));
+      if (hasActive) refresh();
+    }, 7000);
+    return ()=> clearInterval(id);
+  }, [items.map(i=>i.status).join(',')]);
 
   async function add(){
     if (busy) return;
@@ -112,4 +119,3 @@ export default function Sources(){
     </Layout>
   );
 }
-

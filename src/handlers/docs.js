@@ -4,8 +4,10 @@ const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 
 const ddb = new DynamoDBClient({});
 const s3 = new S3Client({});
-const TABLE = process.env.DOCS_TABLE || 'ops-agent-prod-docs';
-const BUCKET = process.env.RAW_BUCKET || 'ops-agent-prod-raw-326445141506-us-east-1';
+const TABLE = process.env.DOCS_TABLE;
+const BUCKET = process.env.RAW_BUCKET;
+const VEC_BUCKET = process.env.VECTOR_BUCKET;
+const VEC_MODE = process.env.VECTOR_MODE || 's3';
 
 function ok(status, body) { return { statusCode: status, body: JSON.stringify(body) }; }
 function parseBody(event){
@@ -88,11 +90,20 @@ exports.handler = async (event) => {
   if (method === 'DELETE' && docId) {
     // Delete raw objects under raw/{docId}/ and the item
     if (BUCKET) {
-      const prefix = `raw/${docId}/`;
-      const listed = await ddbCatch(() => s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix })));
+      for (const prefix of [`raw/${docId}/`, `chunks/${docId}/`]){
+        const listed = await ddbCatch(() => s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix })));
+        if (listed && listed.Contents && listed.Contents.length) {
+          const objects = listed.Contents.map(o => ({ Key: o.Key }));
+          await ddbCatch(() => s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: objects } })));
+        }
+      }
+    }
+    if (VEC_MODE === 's3' && VEC_BUCKET) {
+      const prefix = `vectors/${docId}`;
+      const listed = await ddbCatch(() => s3.send(new ListObjectsV2Command({ Bucket: VEC_BUCKET, Prefix: prefix })));
       if (listed && listed.Contents && listed.Contents.length) {
         const objects = listed.Contents.map(o => ({ Key: o.Key }));
-        await ddbCatch(() => s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: objects } })));
+        await ddbCatch(() => s3.send(new DeleteObjectsCommand({ Bucket: VEC_BUCKET, Delete: { Objects: objects } })));
       }
     }
     await ddb.send(new DeleteItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:'DOC' }) }));
@@ -112,4 +123,3 @@ exports.handler = async (event) => {
 };
 
 async function ddbCatch(fn){ try { return await fn(); } catch { return null; } }
-
