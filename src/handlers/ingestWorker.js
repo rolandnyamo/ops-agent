@@ -1,12 +1,13 @@
 const { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
+const { S3VectorsClient, PutVectorsCommand } = require('@aws-sdk/client-s3vectors');
 const { DynamoDBClient, UpdateItemCommand, GetItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 
 const s3 = new S3Client({});
 const ddb = new DynamoDBClient({});
 const RAW_BUCKET = process.env.RAW_BUCKET;
-const VEC_BUCKET = process.env.VECTOR_BUCKET;
-const VEC_MODE = process.env.VECTOR_MODE || 's3';
+const VEC_BUCKET = process.env.VECTOR_BUCKET || 'ops-embeddings';
+const VEC_MODE = process.env.VECTOR_MODE || 's3vectors';
 const VEC_INDEX = process.env.VECTOR_INDEX || 'docs';
 const TABLE = process.env.DOCS_TABLE;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -57,6 +58,25 @@ async function storeVectorsS3(docId, vectors, chunks){
   await s3.send(new PutObjectCommand({ Bucket: VEC_BUCKET, Key: key, Body: lines.join('\n'), ContentType: 'application/x-ndjson' }));
 }
 
+async function storeVectorsS3Vectors(docId, vectors, chunks){
+  if (!VEC_BUCKET) throw new Error('VECTOR_BUCKET not set');
+  if (!VEC_INDEX) throw new Error('VECTOR_INDEX not set');
+  const client = new S3VectorsClient({});
+  const items = vectors.map((vector, i) => ({
+    vector,
+    metadata: {
+      docId,
+      chunkIdx: i,
+    }
+  }));
+  await client.send(new PutVectorsCommand({ 
+    vectorBucketName: VEC_BUCKET, 
+    indexName: VEC_INDEX,
+    indexArn: 'arn:aws:s3vectors:us-east-1:326445141506:bucket/ops-embeddings/index/docs',
+    vectors: items 
+  }));
+}
+
 exports.handler = async (event) => {
   // EventBridge S3 ObjectCreated event
   try {
@@ -85,10 +105,12 @@ exports.handler = async (event) => {
 
     const vectors = await embedChunks(chunks);
 
-    if (VEC_MODE === 's3') {
+    if (VEC_MODE === 's3vectors') {
+      await storeVectorsS3Vectors(docId, vectors, chunks);
+    } else if (VEC_MODE === 's3') {
       await storeVectorsS3(docId, vectors, chunks);
     } else {
-      console.log('Vector mode not implemented:', VEC_MODE, 'index', VEC_INDEX);
+      console.log('Unknown VECTOR_MODE:', VEC_MODE);
     }
 
     await setStatus(docId, 'READY', { numChunks: chunks.length });
@@ -101,4 +123,3 @@ exports.handler = async (event) => {
     return { statusCode: 500 };
   }
 };
-

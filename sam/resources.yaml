@@ -134,8 +134,7 @@ Resources:
               Action:
                 - dynamodb:*
               Resource:
-                - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
-                - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
+                - "*"
         - S3ReadPolicy:
             BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
 
@@ -161,7 +160,7 @@ Resources:
             - Effect: Allow
               Action:
                 - dynamodb:*
-              Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
+              Resource: "*"
         - S3WritePolicy:
             BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
 
@@ -199,7 +198,7 @@ Resources:
           RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
           VECTOR_BUCKET: !Ref VectorBucketName
           VECTOR_INDEX: !Ref VectorIndexName
-          VECTOR_MODE: s3
+          VECTOR_MODE: s3vectors
           OPENAI_API_KEY: !Ref OpenAIApiKey
       Policies:
         - Statement:
@@ -218,9 +217,9 @@ Resources:
                 - s3:PutObject
                 - s3:DeleteObject
                 - s3:ListBucket
+                - s3vectors:PutVectors
               Resource:
-                - !Sub "arn:aws:s3:::${VectorBucketName}"
-                - !Sub "arn:aws:s3:::${VectorBucketName}/*"
+                - "*"
 
   S3PutRule:
     Type: AWS::Events::Rule
@@ -262,7 +261,7 @@ Resources:
             - Effect: Allow
               Action:
                 - dynamodb:*
-              Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
+              Resource: "*"
         - S3CrudPolicy:
             BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
       Events:
@@ -322,7 +321,7 @@ Resources:
             - Effect: Allow
               Action:
                 - dynamodb:*
-              Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
+              Resource: "*"
 
 Outputs:
   ApiEndpoint:

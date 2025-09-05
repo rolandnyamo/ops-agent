@@ -1,5 +1,6 @@
 const { DynamoDBClient, QueryCommand, GetItemCommand, PutItemCommand, UpdateItemCommand, DeleteItemCommand, ScanCommand } = require('@aws-sdk/client-dynamodb');
 const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
+const { S3VectorsClient, DeleteVectorsCommand } = require('@aws-sdk/client-s3vectors');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 
 const ddb = new DynamoDBClient({});
@@ -7,7 +8,8 @@ const s3 = new S3Client({});
 const TABLE = process.env.DOCS_TABLE;
 const BUCKET = process.env.RAW_BUCKET;
 const VEC_BUCKET = process.env.VECTOR_BUCKET;
-const VEC_MODE = process.env.VECTOR_MODE || 's3';
+const VEC_INDEX = process.env.VECTOR_INDEX || 'docs';
+const VEC_MODE = process.env.VECTOR_MODE || 's3vectors';
 
 function ok(status, body) { return { statusCode: status, body: JSON.stringify(body) }; }
 function parseBody(event){
@@ -105,6 +107,12 @@ exports.handler = async (event) => {
         const objects = listed.Contents.map(o => ({ Key: o.Key }));
         await ddbCatch(() => s3.send(new DeleteObjectsCommand({ Bucket: VEC_BUCKET, Delete: { Objects: objects } })));
       }
+    }
+    if (VEC_MODE === 's3vectors' && VEC_BUCKET) {
+      const cli = new S3VectorsClient({});
+      try {
+        await cli.send(new DeleteVectorsCommand({ bucket: VEC_BUCKET, index: VEC_INDEX, filter: `docId = "${docId}"` }));
+      } catch (e) { console.log('DeleteVectors error (ignored):', e?.message || e); }
     }
     await ddb.send(new DeleteItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:'DOC' }) }));
     return ok(200, { ok: true });
