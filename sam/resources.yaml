@@ -114,10 +114,6 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /qa
             Method: POST
-            Auth: !If
-              - IsAuthEnabled
-              - { Authorizer: BotLambdaAuth }
-              - !Ref AWS::NoValue
       Environment:
         Variables:
           DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
@@ -150,10 +146,6 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /docs/ingest
             Method: POST
-            Auth: !If
-              - IsAuthEnabled
-              - { Authorizer: AdminCognitoAuth }
-              - !Ref AWS::NoValue
       Environment:
         Variables:
           DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
@@ -181,16 +173,64 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /docs/upload-url
             Method: POST
-            Auth: !If
-              - IsAuthEnabled
-              - { Authorizer: AdminCognitoAuth }
-              - !Ref AWS::NoValue
       Environment:
         Variables:
           RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
       Policies:
         - S3WritePolicy:
             BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+
+  DocsFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-docs"
+      CodeUri: ../src
+      Handler: handlers/docs.handler
+      Environment:
+        Variables:
+          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
+          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
+        - S3CrudPolicy:
+            BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+      Events:
+        ListDocs:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /docs
+            Method: GET
+            
+        GetDoc:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /docs/{docId}
+            Method: GET
+            
+        UpdateDoc:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /docs/{docId}
+            Method: PUT
+            
+        DeleteDoc:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /docs/{docId}
+            Method: DELETE
+            
 
   SettingsFn:
     Type: AWS::Serverless::Function
@@ -205,20 +245,12 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /settings
             Method: GET
-            Auth: !If
-              - IsAuthEnabled
-              - { Authorizer: AdminCognitoAuth }
-              - !Ref AWS::NoValue
         PutSettings:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /settings
             Method: PUT
-            Auth: !If
-              - IsAuthEnabled
-              - { Authorizer: AdminCognitoAuth }
-              - !Ref AWS::NoValue
       Environment:
         Variables:
           SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }

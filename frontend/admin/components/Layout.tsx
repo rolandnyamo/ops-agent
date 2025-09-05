@@ -6,7 +6,7 @@ import { useAuthenticator } from '@aws-amplify/ui-react';
 const tabs = [
   { href: '/', label: 'Dashboard' },
   { href: '/setup', label: 'Setup' },
-  { href: '/ingest', label: 'Ingest' },
+  { href: '/sources', label: 'My Sources' },
   { href: '/bot', label: 'Bot' },
 ];
 

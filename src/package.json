@@ -4,7 +4,8 @@
   "version": "0.0.1",
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.649.0",
-    "@aws-sdk/util-dynamodb": "^3.649.0"
+    "@aws-sdk/util-dynamodb": "^3.649.0",
+    "@aws-sdk/client-s3": "^3.649.0",
+    "@aws-sdk/s3-request-presigner": "^3.649.0"
   }
 }
-
