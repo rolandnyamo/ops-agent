@@ -124,9 +124,7 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - dynamodb:GetItem
-                - dynamodb:Query
-                - dynamodb:Scan
+                - dynamodb:*
               Resource:
                 - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
                 - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
@@ -154,8 +152,7 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - dynamodb:PutItem
-                - dynamodb:UpdateItem
+                - dynamodb:*
               Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
         - S3WritePolicy:
             BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
@@ -194,11 +191,7 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - dynamodb:GetItem
-                - dynamodb:Query
-                - dynamodb:PutItem
-                - dynamodb:UpdateItem
-                - dynamodb:DeleteItem
+                - dynamodb:*
               Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
         - S3CrudPolicy:
             BucketName: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
@@ -258,9 +251,7 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-                - dynamodb:UpdateItem
+                - dynamodb:*
               Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
 
 Outputs:
