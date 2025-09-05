@@ -8,14 +8,11 @@
   "scripts": {
     "fmt": "echo format placeholder",
     "test": "echo tests placeholder",
-    "dev:api": "sam build -t sam/resources.yaml ${npm_config_profile:+--profile $npm_config_profile} ${npm_config_region:+--region $npm_config_region} && sam local start-api -t .aws-sam/build/template.yaml --parameter-overrides Stage=prod ${OPENAI_API_KEY:+OpenAIApiKey=$OPENAI_API_KEY} --env-vars sam/local-env.json --port 3001 ${npm_config_profile:+--profile $npm_config_profile} ${npm_config_region:+--region $npm_config_region}",
+    "dev:api": "sam build -t sam/resources.yaml ${npm_config_profile:+--profile $npm_config_profile} ${npm_config_region:+--region $npm_config_region} && sam local start-api -t .aws-sam/build/template.yaml --parameter-overrides Stage=prod --env-vars sam/local-env.json --port 3001 ${npm_config_profile:+--profile $npm_config_profile} ${npm_config_region:+--region $npm_config_region}",
     "dev:web": "npm --prefix frontend/admin run dev",
     "dev": "concurrently -k -n api,web -c yellow,cyan \"npm:dev:api\" \"npm:dev:web\""
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
-  },
-  "dependencies": {
-    "zod": "^4.1.5"
   }
 }

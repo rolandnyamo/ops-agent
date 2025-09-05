@@ -1,12 +1,24 @@
 const OpenAI = require('openai');
 const { zodTextFormat } = require('openai/helpers/zod');
+const { getOpenAIClient } = require('./openai-client');
 
 class OpenAIHelper {
-  constructor(apiKey = process.env.OPENAI_API_KEY) {
-    if (!apiKey) {
-      throw new Error('OpenAI API key is required');
+  constructor(apiKey = null) {
+    this.apiKey = apiKey;
+    this.client = null;
+  }
+
+  async getClient() {
+    if (!this.client) {
+      if (this.apiKey) {
+        // Use provided API key
+        this.client = new OpenAI({ apiKey: this.apiKey });
+      } else {
+        // Use shared client that handles SSM/env variable
+        this.client = await getOpenAIClient();
+      }
     }
-    this.client = new OpenAI({ apiKey });
+    return this.client;
   }
 
   /**
@@ -35,7 +47,8 @@ class OpenAIHelper {
     }
 
     try {
-      const response = await this.client.responses.parse({
+      const client = await this.getClient();
+      const response = await client.responses.parse({
         model,
         input,
         text: {
@@ -131,7 +144,8 @@ class OpenAIHelper {
         delete requestBody.response_format;
       }
 
-      const response = await this.client.responses.create(requestBody);
+      const client = await this.getClient();
+      const response = await client.responses.create(requestBody);
 
       return {
         text: response.output_text || response.output?.[0]?.content || response.choices?.[0]?.message?.content || '',

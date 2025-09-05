@@ -1,15 +1,13 @@
 const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { S3VectorsClient, QueryVectorsCommand } = require('@aws-sdk/client-s3vectors');
+const { getOpenAIClient } = require('./helpers/openai-client');
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OpenAI = require('openai');
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const VECTOR_MODE = process.env.VECTOR_MODE || 's3vectors';
 const VECTOR_BUCKET = process.env.VECTOR_BUCKET;
 const VECTOR_INDEX = process.env.VECTOR_INDEX || 'docs';
 
 async function embedQuery(q){
-  if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not set');
+  const openai = await getOpenAIClient();
   const model = 'text-embedding-3-small';
   const resp = await openai.embeddings.create({ model, input: q });
   return resp?.data?.[0]?.embedding;
