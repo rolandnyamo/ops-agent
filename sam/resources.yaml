@@ -138,7 +138,7 @@ Resources:
     Properties:
       FunctionName: !Sub "${ProjectName}-${Stage}-ingestion"
       CodeUri: ../src
-      Handler: handlers/ingestion.handler
+      Handler: handlers/docs.handler
       Events:
         PostIngest:
           Type: HttpApi

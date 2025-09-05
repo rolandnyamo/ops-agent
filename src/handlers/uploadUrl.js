@@ -3,7 +3,7 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const crypto = require('node:crypto');
 
 const s3 = new S3Client({});
-const BUCKET = process.env.RAW_BUCKET;
+const BUCKET = process.env.RAW_BUCKET || 'ops-agent-prod-raw-326445141506-us-east-1';
 
 function parse(event){
   try { return event && event.body ? (typeof event.body === 'string' ? JSON.parse(event.body) : event.body) : {}; }
@@ -19,5 +19,11 @@ exports.handler = async (event) => {
   const key = `raw/${docId}/${filename}`;
   const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });
   const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 900 });
+  console.log(`upload URL generated for docId=${docId}, key=${key}`);
+  console.log(`upload URL: ${uploadUrl}`);
+  console.log(`content type: ${contentType}`);
+  console.log(`bucket: ${BUCKET}`);
+  console.log(`key: ${key}`);
+  console.log(`filename: ${filename}`);
   return { statusCode: 200, body: JSON.stringify({ docId, fileKey: key, uploadUrl, contentType }) };
 };
