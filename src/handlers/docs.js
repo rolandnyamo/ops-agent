@@ -23,12 +23,14 @@ function makeItem(input){
   const docId = input.docId;
   const status = input.status || 'UPLOADED';
   const category = input.category || 'uncat';
+  const agentId = input.agentId || 'default';
   return {
     PK: `DOC#${docId}`,
-    SK: 'DOC',
+    SK: `DOC#${agentId}`,
     SK1: `STATUS#${status}`,
     SK2: `CATEGORY#${category}`,
     docId,
+    agentId,
     title: input.title || '',
     description: input.description || '',
     category,
@@ -50,14 +52,14 @@ exports.handler = async (event) => {
   const docId = event?.pathParameters?.docId;
 
   if (method === 'GET' && path.endsWith('/docs') && !docId) {
-    // List docs via GSI: SK = 'DOC'
+    const agentId = event?.queryStringParameters?.agentId || 'default';
     const limit = Number(event?.queryStringParameters?.limit || 50);
     const params = {
       TableName: TABLE,
       IndexName: 'Index-01',
       KeyConditionExpression: '#sk = :sk',
       ExpressionAttributeNames: { '#sk': 'SK' },
-      ExpressionAttributeValues: marshall({ ':sk': 'DOC' }),
+      ExpressionAttributeValues: marshall({ ':sk': `DOC#${agentId}` }),
       Limit: limit,
     };
     console.log('Querying docs with params:', JSON.stringify(params));
@@ -67,7 +69,8 @@ exports.handler = async (event) => {
   }
 
   if (method === 'GET' && docId) {
-    const key = { PK: `DOC#${docId}`, SK: 'DOC' };
+    const agentId = event?.queryStringParameters?.agentId || 'default';
+    const key = { PK: `DOC#${docId}`, SK: `DOC#${agentId}` };
     const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall(key) }));
     if (!res.Item) return ok(404, { message: 'Not found' });
     return ok(200, unmarshall(res.Item));
@@ -83,18 +86,20 @@ exports.handler = async (event) => {
       if (typeof body[k] !== 'undefined') { expr.push(`#${k} = :${k}`); names[`#${k}`] = k; values[`:${k}`] = body[k]; }
     }
     if (typeof body.category === 'string') { expr.push('#SK2 = :sk2'); names['#SK2'] = 'SK2'; values[':sk2'] = `CATEGORY#${body.category || 'uncat'}`; }
+    const agentId = event?.queryStringParameters?.agentId || 'default';
     const UpdateExpression = 'SET ' + ['#u = :u', ...expr].join(', ');
-    await ddb.send(new UpdateItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:'DOC' }), UpdateExpression, ExpressionAttributeNames: names, ExpressionAttributeValues: marshall(values) }));
-    const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:'DOC' }) }));
+    await ddb.send(new UpdateItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }), UpdateExpression, ExpressionAttributeNames: names, ExpressionAttributeValues: marshall(values) }));
+    const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }) }));
     return ok(200, unmarshall(res.Item));
   }
 
   if (method === 'DELETE' && docId) {
+    const agentId = event?.queryStringParameters?.agentId || 'default';
     // Mark DELETING (best-effort)
     try {
       await ddb.send(new UpdateItemCommand({
         TableName: TABLE,
-        Key: marshall({ PK:`DOC#${docId}`, SK:'DOC' }),
+        Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }),
         UpdateExpression: 'SET #s = :s, #u = :u',
         ExpressionAttributeNames: { '#s':'status', '#u':'updatedAt' },
         ExpressionAttributeValues: marshall({ ':s':'DELETING', ':u': new Date().toISOString() })
@@ -102,7 +107,7 @@ exports.handler = async (event) => {
     } catch {}
     // Delete raw objects under raw/{docId}/ and chunks/{docId}/
     if (BUCKET) {
-      for (const prefix of [`raw/${docId}/`, `chunks/${docId}/`]){
+      for (const prefix of [`raw/${agentId}/${docId}/`, `chunks/${agentId}/${docId}/`]){
         const listed = await ddbCatch(() => s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix })));
         if (listed && listed.Contents && listed.Contents.length) {
           const objects = listed.Contents.map(o => ({ Key: o.Key }));
@@ -111,7 +116,7 @@ exports.handler = async (event) => {
       }
     }
     if (VEC_MODE === 's3' && VEC_BUCKET) {
-      const prefix = `vectors/${docId}`;
+      const prefix = `vectors/${agentId}/${docId}`;
       const listed = await ddbCatch(() => s3.send(new ListObjectsV2Command({ Bucket: VEC_BUCKET, Prefix: prefix })));
       if (listed && listed.Contents && listed.Contents.length) {
         const objects = listed.Contents.map(o => ({ Key: o.Key }));
@@ -121,10 +126,10 @@ exports.handler = async (event) => {
     if (VEC_MODE === 's3vectors' && VEC_BUCKET) {
       const cli = new S3VectorsClient({});
       try {
-        await cli.send(new DeleteVectorsCommand({ bucket: VEC_BUCKET, index: VEC_INDEX, filter: `docId = "${docId}"` }));
+        await cli.send(new DeleteVectorsCommand({ bucket: VEC_BUCKET, index: VEC_INDEX, filter: `docId = \"${docId}\" AND agentId = \"${agentId}\"` }));
       } catch (e) { console.log('DeleteVectors error (ignored):', e?.message || e); }
     }
-    await ddb.send(new DeleteItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:'DOC' }) }));
+    await ddb.send(new DeleteItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }) }));
     return ok(200, { ok: true });
   }
 

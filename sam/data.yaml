@@ -12,6 +12,12 @@ Resources:
     Properties:
       BucketName: !Sub "${ProjectName}-${Stage}-raw-${AWS::AccountId}-${AWS::Region}"
       VersioningConfiguration: { Status: Enabled }
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: ['PUT','GET','HEAD']
+            AllowedOrigins: ['*']
+            AllowedHeaders: ['*']
+            MaxAge: 3000
 
   VectorBucket:
     Type: AWS::S3::Bucket

@@ -20,14 +20,16 @@ export type Settings = {
   updatedAt?: string;
 };
 
-export async function getSettings(): Promise<Settings> {
-  const res = await fetch(`${cfg.apiBase}/settings`, { headers: { 'Content-Type': 'application/json', ...(await authHeader()) } });
+export async function getSettings(agentId?: string): Promise<Settings> {
+  const qs = agentId ? `?agentId=${encodeURIComponent(agentId)}` : '';
+  const res = await fetch(`${cfg.apiBase}/settings${qs}`, { headers: { 'Content-Type': 'application/json', ...(await authHeader()) } });
   if (!res.ok) throw new Error(`GET /settings ${res.status}`);
   return res.json();
 }
 
-export async function putSettings(data: Settings): Promise<Settings> {
-  const res = await fetch(`${cfg.apiBase}/settings`, {
+export async function putSettings(data: Settings, agentId?: string): Promise<Settings> {
+  const qs = agentId ? `?agentId=${encodeURIComponent(agentId)}` : '';
+  const res = await fetch(`${cfg.apiBase}/settings${qs}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify(data),
@@ -54,8 +56,8 @@ export type DocItem = {
   updatedAt?: string;
 };
 
-export async function createUploadUrl(filename: string, contentType: string){
-  const res = await fetch(`${cfg.apiBase}/docs/upload-url`, {
+export async function createUploadUrl(filename: string, contentType: string, agentId?: string){
+  const res = await fetch(`${cfg.apiBase}/docs/upload-url${agentId?`?agentId=${encodeURIComponent(agentId)}`:''}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify({ filename, contentType })
@@ -64,8 +66,9 @@ export async function createUploadUrl(filename: string, contentType: string){
   return res.json() as Promise<{ docId: string; fileKey: string; uploadUrl: string; contentType: string }>;
 }
 
-export async function ingestDoc(payload: { docId: string; title: string; description?: string; category?: string; audience?: string; year?: string; version?: string; fileKey?: string; url?: string; }){
-  const res = await fetch(`${cfg.apiBase}/docs/ingest`, {
+export async function ingestDoc(payload: { docId: string; title: string; description?: string; category?: string; audience?: string; year?: string; version?: string; fileKey?: string; url?: string; }, agentId?: string){
+  if (agentId) (payload as any).agentId = agentId;
+  const res = await fetch(`${cfg.apiBase}/docs/ingest${agentId?`?agentId=${encodeURIComponent(agentId)}`:''}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify(payload)
@@ -74,14 +77,14 @@ export async function ingestDoc(payload: { docId: string; title: string; descrip
   return res.json() as Promise<DocItem>;
 }
 
-export async function listDocs(){
-  const res = await fetch(`${cfg.apiBase}/docs`, { headers: { ...(await authHeader()) } });
+export async function listDocs(agentId?: string){
+  const res = await fetch(`${cfg.apiBase}/docs${agentId?`?agentId=${encodeURIComponent(agentId)}`:''}`, { headers: { ...(await authHeader()) } });
   if (!res.ok) throw new Error(`list ${res.status}`);
   return res.json() as Promise<{ items: DocItem[]; count: number; nextToken?: string|null }>;
 }
 
-export async function updateDoc(docId: string, patch: Partial<DocItem>){
-  const res = await fetch(`${cfg.apiBase}/docs/${docId}`, {
+export async function updateDoc(docId: string, patch: Partial<DocItem>, agentId?: string){
+  const res = await fetch(`${cfg.apiBase}/docs/${docId}${agentId?`?agentId=${encodeURIComponent(agentId)}`:''}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify(patch)
@@ -90,8 +93,27 @@ export async function updateDoc(docId: string, patch: Partial<DocItem>){
   return res.json() as Promise<DocItem>;
 }
 
-export async function deleteDoc(docId: string){
-  const res = await fetch(`${cfg.apiBase}/docs/${docId}`, { method: 'DELETE', headers: { ...(await authHeader()) } });
+export async function deleteDoc(docId: string, agentId?: string){
+  const res = await fetch(`${cfg.apiBase}/docs/${docId}${agentId?`?agentId=${encodeURIComponent(agentId)}`:''}`, { method: 'DELETE', headers: { ...(await authHeader()) } });
   if (!res.ok) throw new Error(`delete ${res.status}`);
   return res.json() as Promise<{ ok: boolean }>;
+}
+
+// Infer API
+export async function inferSettings(useCase: string){
+  const res = await fetch(`${cfg.apiBase}/infer?mode=settings`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ useCase }) });
+  if (!res.ok) throw new Error(`infer settings ${res.status}`);
+  return res.json() as Promise<{ agentName: string; confidenceThreshold: number; fallbackMessage: string; organizationType?: string; categories?: string[]; audiences?: string[]; notes?: string } >;
+}
+
+export async function inferDoc(filename: string, sampleText: string, categories?: string[]){
+  const res = await fetch(`${cfg.apiBase}/infer?mode=doc`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ filename, sampleText, categories }) });
+  if (!res.ok) throw new Error(`infer doc ${res.status}`);
+  return res.json() as Promise<{ title: string; category: string; audience: string; year: number|string; version: string; description: string } >;
+}
+
+export async function ask(q: string, agentId?: string, filter?: string){
+  const res = await fetch(`${cfg.apiBase}/qa`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ q, agentId, filter }) });
+  if (!res.ok) throw new Error(`qa ${res.status}`);
+  return res.json() as Promise<{ answer: string; grounded: boolean; confidence: number; citations: Array<{docId:string; chunk:number; score:number}> } >;
 }

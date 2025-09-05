@@ -56,7 +56,7 @@ Resources:
       StageName: !Ref Stage
       CorsConfiguration:
         AllowOrigins: ['*']
-        AllowMethods: ['GET','POST','OPTIONS']
+        AllowMethods: ['GET','POST', 'PUT', 'DELETE', 'OPTIONS']
         AllowHeaders: ['authorization','content-type','x-bot-signature','x-bot-timestamp']
       Auth:
         Authorizers:
@@ -326,6 +326,60 @@ Resources:
             Path: /docs/{docId}
             Method: DELETE
             
+  AgentsFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-agents"
+      CodeUri: ../src
+      Handler: handlers/agents.handler
+      Environment:
+        Variables:
+          SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
+          OPENAI_API_KEY: !Ref OpenAIApiKey
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:Query
+              Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
+      Events:
+        CreateAgent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /agents
+            Method: POST
+        ListAgents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /agents
+            Method: GET
+        GetAgent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /agents/{agentId}
+            Method: GET
+  InferFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-infer"
+      CodeUri: ../src
+      Handler: handlers/infer.handler
+      Timeout: 20
+      Environment:
+        Variables:
+          OPENAI_API_KEY: !Ref OpenAIApiKey
+      Events:
+        PostInfer:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /infer
+            Method: POST
 
   SettingsFn:
     Type: AWS::Serverless::Function

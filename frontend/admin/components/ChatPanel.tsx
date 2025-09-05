@@ -1,8 +1,11 @@
 import React, { useMemo, useState } from 'react';
+import { ask } from '../lib/api';
+import { useAgent } from '../lib/agent';
 
 type Msg = { id: string; role: 'me'|'bot'; text: string };
 
 export default function ChatPanel(){
+  const { agentId } = useAgent();
   const seed: Msg[] = useMemo(() => ([
     { id: 'm1', role: 'bot', text: 'Hi! Ask anything grounded in your docs.' },
   ]), []);
@@ -17,10 +20,14 @@ export default function ChatPanel(){
     setMessages(m => [...m, mine]);
     setQ('');
     setBusy(true);
-    // mock answer
-    await new Promise(r => setTimeout(r, 600));
-    const answer = `Here’s a mocked, grounded response with a calm tone.\n\n• Citation A (pg 2-3)\n• Citation B (section 4)`;
-    setMessages(m => [...m, { id: 'b'+id, role: 'bot', text: answer }]);
+    try{
+      const r = await ask(q, agentId);
+      const answer = r.answer || 'No answer';
+      const cites = (r.citations||[]).map(c=>`[${c.docId} #${c.chunk}] (${c.score})`).join(' ');
+      setMessages(m => [...m, { id: 'b'+id, role: 'bot', text: `${answer}\n\n${cites}` }]);
+    } catch(e:any){
+      setMessages(m => [...m, { id: 'b'+id, role: 'bot', text: 'Error calling /qa' }]);
+    }
     setBusy(false);
   }
 
@@ -42,4 +49,3 @@ export default function ChatPanel(){
     </div>
   );
 }
-

@@ -34,9 +34,10 @@ async function queryS3Vectors(vector, topK=5, filter){
   return items.map((r) => ({ score: r.score ?? r.distance ?? 0, metadata: r.metadata, text: r.text }));
 }
 
-async function queryS3Jsonl(vector, topK=5){
+async function queryS3Jsonl(vector, topK=5, agentId){
   const s3 = new S3Client({});
-  const list = await s3.send(new ListObjectsV2Command({ Bucket: VECTOR_BUCKET, Prefix: 'vectors/' }));
+  const prefix = agentId ? `vectors/${agentId}/` : 'vectors/';
+  const list = await s3.send(new ListObjectsV2Command({ Bucket: VECTOR_BUCKET, Prefix: prefix }));
   const all = [];
   for (const obj of list.Contents || []){
     const get = await s3.send(new GetObjectCommand({ Bucket: VECTOR_BUCKET, Key: obj.Key }));
@@ -55,14 +56,17 @@ exports.handler = async (event) => {
   const body = event?.body && typeof event.body === 'string' ? JSON.parse(event.body) : event?.body || {};
   const q = body?.q;
   const filter = body?.filter;
+  const agentId = body?.agentId;
   if (!q) return { statusCode: 400, body: JSON.stringify({ message: 'q is required' }) };
 
   const vector = await embedQuery(q);
   let results;
   if (VECTOR_MODE === 's3vectors') {
-    results = await queryS3Vectors(vector, 5, filter);
+    let f = filter;
+    if (agentId) f = f ? `(${f}) AND agentId = "${agentId}"` : `agentId = "${agentId}"`;
+    results = await queryS3Vectors(vector, 5, f);
   } else {
-    results = await queryS3Jsonl(vector, 5);
+    results = await queryS3Jsonl(vector, 5, agentId);
   }
 
   const grounded = results.length > 0;

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { useAuthenticator } from '@aws-amplify/ui-react';
+import { useAgent } from '../lib/agent';
 
 const tabs = [
   { href: '/', label: 'Dashboard' },
@@ -13,6 +14,7 @@ const tabs = [
 export default function Layout({ children }: { children: React.ReactNode }){
   const { pathname } = useRouter();
   const { signOut, user } = useAuthenticator((context) => [context.user]);
+  const { agentId, agents, setAgentId } = useAgent();
   return (
     <div>
       <nav className="nav">
@@ -24,6 +26,9 @@ export default function Layout({ children }: { children: React.ReactNode }){
             ))}
           </div>
           <div style={{marginLeft:'auto'}} className="row">
+            <select className="select" value={agentId} onChange={(e)=>setAgentId(e.target.value)}>
+              {[agentId, ...agents.filter(a=>a!==agentId)].map(id => <option key={id} value={id}>{id}</option>)}
+            </select>
             <div className="pill mini">{user?.signInDetails?.loginId || 'signed in'}</div>
             <button className="btn ghost" onClick={signOut}>Sign out</button>
           </div>

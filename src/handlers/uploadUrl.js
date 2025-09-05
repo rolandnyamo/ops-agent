@@ -13,6 +13,7 @@ function parse(event){
 exports.handler = async (event) => {
   if (!BUCKET) return { statusCode: 500, body: JSON.stringify({ message: 'RAW_BUCKET not set' }) };
   const body = parse(event);
+  const agentId = (event?.queryStringParameters?.agentId) || body.agentId || 'default';
   const filename = (body.filename || 'upload.bin').replace(/[^A-Za-z0-9._-]/g, '_');
   const contentType = body.contentType || 'application/octet-stream';
   const allow = ['text/plain','text/html','application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
@@ -20,14 +21,14 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ message: `Unsupported contentType ${contentType}` }) };
   }
   const docId = (body.docId && String(body.docId)) || crypto.randomUUID();
-  const key = `raw/${docId}/${filename}`;
+  const key = `raw/${agentId}/${docId}/${filename}`;
   const cmd = new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType });
   const uploadUrl = await getSignedUrl(s3, cmd, { expiresIn: 900 });
-  console.log(`upload URL generated for docId=${docId}, key=${key}`);
+  console.log(`upload URL generated for agentId=${agentId}, docId=${docId}, key=${key}`);
   console.log(`upload URL: ${uploadUrl}`);
   console.log(`content type: ${contentType}`);
   console.log(`bucket: ${BUCKET}`);
   console.log(`key: ${key}`);
   console.log(`filename: ${filename}`);
-  return { statusCode: 200, body: JSON.stringify({ docId, fileKey: key, uploadUrl, contentType }) };
+  return { statusCode: 200, body: JSON.stringify({ agentId, docId, fileKey: key, uploadUrl, contentType }) };
 };

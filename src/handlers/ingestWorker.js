@@ -26,11 +26,11 @@ async function readObject(bucket, key){
   const buffer = Buffer.from(await res.Body.transformToByteArray());
   return { buffer, contentType };
 }
-async function setStatus(docId, status, extra={}){
+async function setStatus(docId, agentId, status, extra={}){
   const names = { '#u':'updatedAt', '#s':'status' };
   const values = { ':u': new Date().toISOString(), ':s': status };
   for (const [k,v] of Object.entries(extra)) { names[`#${k}`] = k; values[`:${k}`] = v; }
-  await ddb.send(new UpdateItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:'DOC' }), UpdateExpression: 'SET #u = :u, #s = :s' + Object.keys(extra).map(k=>`, #${k} = :${k}`).join(''), ExpressionAttributeNames: names, ExpressionAttributeValues: marshall(values) }));
+  await ddb.send(new UpdateItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId||'default'}` }), UpdateExpression: 'SET #u = :u, #s = :s' + Object.keys(extra).map(k=>`, #${k} = :${k}`).join(''), ExpressionAttributeNames: names, ExpressionAttributeValues: marshall(values) }));
 }
 
 async function embedChunks(chunks){
@@ -53,9 +53,9 @@ async function embedChunks(chunks){
 
 async function storeVectorsS3(docId, vectors, chunks, docMeta){
   if (!VEC_BUCKET) return;
-  const meta = docMeta ? { docId, title: docMeta.title, category: docMeta.category, audience: docMeta.audience, year: docMeta.year, version: docMeta.version } : { docId };
+  const meta = docMeta ? { docId, agentId: docMeta.agentId || 'default', title: docMeta.title, category: docMeta.category, audience: docMeta.audience, year: docMeta.year, version: docMeta.version } : { docId, agentId: 'default' };
   const lines = vectors.map((v, i) => JSON.stringify({ ...meta, chunkIdx: i, vector: v, text: chunks[i] }));
-  const key = `vectors/${docId}.jsonl`;
+  const key = `vectors/${meta.agentId}/${docId}.jsonl`;
   await s3.send(new PutObjectCommand({ Bucket: VEC_BUCKET, Key: key, Body: lines.join('\n'), ContentType: 'application/x-ndjson' }));
 }
 
@@ -67,6 +67,7 @@ async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
     vector,
     metadata: {
       docId,
+      agentId: docMeta?.agentId || 'default',
       title: docMeta?.title,
       category: docMeta?.category,
       audience: docMeta?.audience,
@@ -86,9 +87,12 @@ exports.handler = async (event) => {
     const bucket = detail?.bucket?.name || RAW_BUCKET;
     const key = decodeKey(detail?.object?.key || '');
     if (!key.startsWith('raw/')) return { statusCode: 200 };
-    const docId = key.split('/')[1];
+    const parts = key.split('/');
+    const hasAgent = parts.length > 3;
+    const agentId = hasAgent ? parts[1] : 'default';
+    const docId = hasAgent ? parts[2] : parts[1];
 
-    await setStatus(docId, 'PROCESSING');
+    await setStatus(docId, agentId, 'PROCESSING');
 
     const { buffer, contentType } = await readObject(bucket, key);
     let text;
@@ -105,19 +109,19 @@ exports.handler = async (event) => {
       const { value } = await mammoth.extractRawText({ buffer });
       text = String(value||'').trim();
     } else {
-      await setStatus(docId, 'FAILED', { error: `Unsupported content type: ${contentType}` });
+      await setStatus(docId, agentId, 'FAILED', { error: `Unsupported content type: ${contentType}` });
       return { statusCode: 200 };
     }
 
     const chunks = chunkText(text);
     const chunkLines = chunks.map((t, i) => JSON.stringify({ idx: i, text: t }));
-    await s3.send(new PutObjectCommand({ Bucket: RAW_BUCKET, Key: `chunks/${docId}/chunks.jsonl`, Body: chunkLines.join('\n'), ContentType: 'application/x-ndjson' }));
+    await s3.send(new PutObjectCommand({ Bucket: RAW_BUCKET, Key: `chunks/${agentId}/${docId}/chunks.jsonl`, Body: chunkLines.join('\n'), ContentType: 'application/x-ndjson' }));
 
     const vectors = await embedChunks(chunks);
     // Fetch doc metadata for vector metadata
     let docMeta = null;
     try {
-      const dres = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:'DOC' }) }));
+      const dres = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }) }));
       docMeta = dres.Item ? unmarshall(dres.Item) : null;
     } catch {}
 
@@ -129,12 +133,12 @@ exports.handler = async (event) => {
       console.log('Unknown VECTOR_MODE:', VEC_MODE);
     }
 
-    await setStatus(docId, 'READY', { numChunks: chunks.length });
+    await setStatus(docId, agentId, 'READY', { numChunks: chunks.length });
     return { statusCode: 200 };
   } catch (e) {
     console.error('ingestWorker error', e);
     try {
-      const key = (event?.detail?.object?.key)||''; const docId = key.split('/')[1]; if (docId) await setStatus(docId, 'FAILED', { error: String(e.message||e) });
+      const key = (event?.detail?.object?.key)||''; const parts = key.split('/'); const hasAgent = parts.length>3; const docId = hasAgent?parts[2]:parts[1]; const agentId = hasAgent?parts[1]:'default'; if (docId) await setStatus(docId, agentId, 'FAILED', { error: String(e.message||e) });
     } catch {}
     return { statusCode: 500 };
   }

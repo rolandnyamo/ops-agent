@@ -11,7 +11,7 @@ export default function Home(){
           <p className="muted">Set up your agent in minutes.</p>
           <div className="row" style={{marginTop:12, flexWrap:'wrap', gap:10}}>
             <Link href="/setup" className="btn">Initial Setup</Link>
-            <Link href="/ingest" className="btn ghost">Ingest Content</Link>
+            <Link href="/sources" className="btn ghost">Add Content</Link>
             <Link href="/bot" className="btn ghost">Bot Integration</Link>
           </div>
         </div>

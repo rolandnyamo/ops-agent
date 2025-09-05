@@ -1,25 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Layout from '../components/Layout';
-import { createUploadUrl, deleteDoc, ingestDoc, listDocs, updateDoc, type DocItem } from '../lib/api';
+import { createUploadUrl, deleteDoc, ingestDoc, listDocs, updateDoc, inferDoc, getSettings, type DocItem } from '../lib/api';
+import { useAgent } from '../lib/agent';
 
 export default function Sources(){
+  const { agentId } = useAgent();
   const [items, setItems] = useState<DocItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string|undefined>();
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ title: '', description: '', category: '', audience: '', year: '', version: '' });
+  const [form, setForm] = useState({ title: '', description: '', category: '', audience: 'All', year: String(new Date().getFullYear()), version: 'v1' });
   const fileRef = useRef<HTMLInputElement|null>(null);
+  const [knownCategories, setKnownCategories] = useState<string[]>([]);
   const [editing, setEditing] = useState<string|null>(null);
 
   async function refresh(){
     setLoading(true);
     try {
-      const r = await listDocs();
+      const r = await listDocs(agentId);
       setItems(r.items);
     } catch (e:any) { setError('Failed to load sources'); }
     finally { setLoading(false); }
   }
-  useEffect(()=>{ refresh(); },[]);
+  useEffect(()=>{ refresh(); },[agentId]);
+  useEffect(()=>{ (async()=>{ try{ const s=await getSettings(agentId); setKnownCategories(((s as any).categories)||[]);}catch{} })(); },[agentId]);
   useEffect(()=>{
     const id = setInterval(()=>{
       const hasActive = items.some(i => (i.status==='UPLOADED' || i.status==='PROCESSING'));
@@ -35,33 +39,59 @@ export default function Sources(){
       const file = fileRef.current?.files?.[0];
       if (!file) throw new Error('File required');
       if (!form.title) throw new Error('Title required');
-      const { docId, uploadUrl, fileKey, contentType } = await createUploadUrl(file.name, file.type || 'application/octet-stream');
+      const { docId, uploadUrl, fileKey, contentType } = await createUploadUrl(file.name, file.type || 'application/octet-stream', agentId);
       await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: file });
-      await ingestDoc({ docId, title: form.title, description: form.description, category: form.category, audience: form.audience, year: form.year, version: form.version, fileKey });
-      setForm({ title:'', description:'', category:'', audience:'', year:'', version:'' }); if (fileRef.current) fileRef.current.value = '';
+      await ingestDoc({ docId, title: form.title, description: form.description, category: form.category, audience: form.audience, year: form.year, version: form.version, fileKey }, agentId);
+      setForm({ title:'', description:'', category:'', audience:'All', year:String(new Date().getFullYear()), version:'v1' }); if (fileRef.current) fileRef.current.value = '';
       await refresh();
     } catch (e:any) { setError(e.message || 'Add failed'); }
     finally { setBusy(false); }
   }
 
+  const onDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    try{
+      const sampleBlob = file.slice(0, 4000);
+      const sampleText = await sampleBlob.text();
+      const inf = await inferDoc(file.name, sampleText, knownCategories);
+      setForm({
+        title: inf.title || file.name,
+        category: inf.category || (knownCategories[0] || ''),
+        audience: inf.audience || 'All',
+        year: String(inf.year || new Date().getFullYear()),
+        version: inf.version || 'v1',
+        description: inf.description || ''
+      });
+    } catch(err:any){ setError('Could not infer document details'); }
+  }, [knownCategories]);
+  const prevent = (e:any)=>{ e.preventDefault(); e.stopPropagation(); };
+
   async function saveEdit(id:string, patch: Partial<DocItem>){
     setBusy(true); setError(undefined);
-    try { await updateDoc(id, patch); setEditing(null); await refresh(); } catch(e:any){ setError('Update failed'); } finally { setBusy(false); }
+    try { await updateDoc(id, patch, agentId); setEditing(null); await refresh(); } catch(e:any){ setError('Update failed'); } finally { setBusy(false); }
   }
 
   async function remove(id:string){
     if (!confirm('Delete this source?')) return;
     setBusy(true); setError(undefined);
-    try { await deleteDoc(id); await refresh(); } catch(e:any){ setError('Delete failed'); } finally { setBusy(false); }
+    try { await deleteDoc(id, agentId); await refresh(); } catch(e:any){ setError('Delete failed'); } finally { setBusy(false); }
   }
 
   return (
     <Layout>
       <div className="grid cols-2">
-        <div className="card">
+        <div className="card" onDrop={onDrop} onDragOver={prevent} onDragEnter={prevent}>
           <h3 className="card-title">Add Source</h3>
           {error && <div className="chip" style={{borderColor:'#744'}}>{error}</div>}
           <div className="row" style={{gap:12, flexWrap:'wrap'}}>
+            <div style={{flexBasis:'100%'}}>
+              <div style={{border:'1px dashed var(--line)', borderRadius:12, padding:18, textAlign:'center', background:'rgba(255,255,255,.02)'}}>
+                <div className="muted">Drag & drop to infer details, or choose a file</div>
+                <input className="input" type="file" ref={fileRef} style={{marginTop:10}} />
+              </div>
+            </div>
             <input className="input" placeholder="Title" value={form.title} onChange={e=>setForm({...form, title:e.target.value})} />
             <input className="input" placeholder="Category" value={form.category} onChange={e=>setForm({...form, category:e.target.value})} />
             <input className="input" placeholder="Audience" value={form.audience} onChange={e=>setForm({...form, audience:e.target.value})} />
