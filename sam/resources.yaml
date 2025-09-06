@@ -345,7 +345,7 @@ Resources:
             - Effect: Allow
               Action:
                 - dynamodb:*
-              Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
+              Resource: "*"
         - Statement:
             - Effect: Allow
               Action:
