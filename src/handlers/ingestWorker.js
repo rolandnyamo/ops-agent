@@ -49,27 +49,97 @@ async function storeVectorsS3(docId, vectors, chunks, docMeta){
   await s3.send(new PutObjectCommand({ Bucket: VEC_BUCKET, Key: key, Body: lines.join('\n'), ContentType: 'application/x-ndjson' }));
 }
 
+// Utility function to calculate JSON size in bytes
+function getJsonSize(obj) {
+  return new TextEncoder().encode(JSON.stringify(obj)).length;
+}
+
+// Utility function to truncate text to fit within metadata size limits
+function truncateTextForMetadata(text, docMeta, maxFilterableSize = 1800) { // Leave buffer for other fields
+  if (!text) return '';
+  
+  // Create realistic template with actual metadata values
+  const filterableMetaTemplate = { 
+    title: docMeta?.title || '', 
+    category: docMeta?.category || '', 
+    audience: docMeta?.audience || '', 
+    chunkIdx: 999, // Use realistic number
+    text: '' 
+  };
+  
+  // Start with full text and progressively truncate
+  let truncated = text;
+  
+  while (truncated.length > 0) {
+    filterableMetaTemplate.text = truncated;
+    if (getJsonSize(filterableMetaTemplate) <= maxFilterableSize) {
+      break;
+    }
+    
+    // Truncate by 10% each iteration, preserving word boundaries
+    const newLength = Math.floor(truncated.length * 0.9);
+    let cutPoint = newLength;
+    
+    // Try to cut at word boundary
+    const spaceIndex = truncated.lastIndexOf(' ', newLength);
+    if (spaceIndex > newLength * 0.8) { // Don't go back too far
+      cutPoint = spaceIndex;
+    }
+    
+    truncated = truncated.substring(0, cutPoint) + '...';
+  }
+  
+  return truncated;
+}
+
 async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
   if (!VEC_BUCKET) throw new Error('VECTOR_BUCKET not set');
   if (!VEC_INDEX) throw new Error('VECTOR_INDEX not set');
   const client = new S3VectorsClient({});
-  const items = vectors.map((vector, i) => ({
-    key: `${docId}_chunk_${i}`, // Required unique identifier
-    data: {
-      float32: vector // AWS S3 Vectors requires data.float32 format
-    },
-    metadata: {
-      docId,
-      agentId: docMeta?.agentId || 'default',
-      title: docMeta?.title,
-      category: docMeta?.category,
-      audience: docMeta?.audience,
-      year: docMeta?.year,
-      version: docMeta?.version,
-      chunkIdx: i,
-      text: chunks[i]
-    }
-  }));
+  const items = vectors.map((vector, i) => {
+    const truncatedText = truncateTextForMetadata(chunks[i], docMeta);
+    
+    return {
+      key: `${docId}_chunk_${i}`, // Required unique identifier
+      data: {
+        float32: vector // AWS S3 Vectors requires data.float32 format
+      },
+      metadata: {
+        // Filterable metadata (under 2KB limit) - fields likely to be used for search/filtering
+        title: docMeta?.title || '',
+        category: docMeta?.category || '',
+        audience: docMeta?.audience || '',
+        chunkIdx: i,
+        text: truncatedText,
+        
+        // Unfilterable metadata - stored but not indexed (larger fields)
+        unfilterable: {
+          docId: docId,
+          agentId: docMeta?.agentId || 'default',
+          year: docMeta?.year || '',
+          version: docMeta?.version || '',
+          originalTextLength: chunks[i]?.length || 0,
+          fullText: chunks[i] || '' // Store full text in unfilterable section
+        }
+      }
+    };
+  });
+  
+  // Log metadata size for debugging (first item only)
+  if (items.length > 0) {
+    const sampleMetadata = items[0].metadata;
+    const filterableMetadata = {
+      title: sampleMetadata.title,
+      category: sampleMetadata.category,
+      audience: sampleMetadata.audience,
+      chunkIdx: sampleMetadata.chunkIdx,
+      text: sampleMetadata.text
+    };
+    const filterableSize = getJsonSize(filterableMetadata);
+    const totalSize = getJsonSize(sampleMetadata);
+    console.log(`Metadata sizes - Filterable: ${filterableSize}B, Total: ${totalSize}B`);
+  }
+  
   await client.send(new PutVectorsCommand({ 
     vectorBucketName: VEC_BUCKET, 
     indexName: VEC_INDEX, 
