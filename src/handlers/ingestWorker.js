@@ -54,8 +54,11 @@ async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
   if (!VEC_INDEX) throw new Error('VECTOR_INDEX not set');
   const client = new S3VectorsClient({});
   const items = vectors.map((vector, i) => ({
-    vector,
-    metadata: {
+    key: `${docId}_chunk_${i}`, // Required unique identifier
+    data: {
+      float32: vector // AWS S3 Vectors requires data.float32 format
+    },
+    metadata: JSON.stringify({
       docId,
       agentId: docMeta?.agentId || 'default',
       title: docMeta?.title,
@@ -64,10 +67,14 @@ async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
       year: docMeta?.year,
       version: docMeta?.version,
       chunkIdx: i,
-    },
-    text: chunks[i]
+      text: chunks[i]
+    })
   }));
-  await client.send(new PutVectorsCommand({ bucket: VEC_BUCKET, index: VEC_INDEX, vectors: items }));
+  await client.send(new PutVectorsCommand({ 
+    vectorBucketName: VEC_BUCKET, 
+    indexName: VEC_INDEX, 
+    vectors: items 
+  }));
 }
 
 exports.handler = async (event) => {
