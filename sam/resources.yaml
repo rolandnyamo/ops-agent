@@ -140,9 +140,7 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - dynamodb:GetItem
-                - dynamodb:Query
-                - dynamodb:Scan
+                - dynamodb:*
               Resource:
                 - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
                 - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
@@ -228,8 +226,7 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - dynamodb:UpdateItem
-                - dynamodb:GetItem
+                - dynamodb:*
               Resource: '*'
         - S3ReadPolicy:
             BucketName: '*'
@@ -347,9 +344,7 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - dynamodb:PutItem
-                - dynamodb:GetItem
-                - dynamodb:Query
+                - dynamodb:*
               Resource: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableArn' }
         - Statement:
             - Effect: Allow

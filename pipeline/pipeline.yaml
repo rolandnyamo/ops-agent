@@ -79,6 +79,9 @@ Resources:
             install:
               commands:
                 - echo Using AWS CLI to deploy SAM templates
+                - cd src
+                - npm install
+                - cd ..
             build:
               commands:
                 - set -e
