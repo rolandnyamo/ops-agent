@@ -58,7 +58,7 @@ async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
     data: {
       float32: vector // AWS S3 Vectors requires data.float32 format
     },
-    metadata: JSON.stringify({
+    metadata: {
       docId,
       agentId: docMeta?.agentId || 'default',
       title: docMeta?.title,
@@ -68,7 +68,7 @@ async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
       version: docMeta?.version,
       chunkIdx: i,
       text: chunks[i]
-    })
+    }
   }));
   await client.send(new PutVectorsCommand({ 
     vectorBucketName: VEC_BUCKET, 
