@@ -1,17 +1,22 @@
 import { useEffect, useState } from 'react';
 import Layout from '../../../components/Layout';
-import { deleteDoc, listDocs, updateDoc, type DocItem } from '../../../lib/api';
+import { deleteDoc, updateDoc, type DocItem } from '../../../lib/api';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
+import { useApp } from '../../../context/AppContext';
+import { SourcesTableSkeleton, SourcesHeaderSkeleton } from '../../../components/Skeletons';
 
 export default function AgentSources(){
   const { query, push } = useRouter();
   const agentId = String(query.id || '');
-  const [items, setItems] = useState<DocItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { getAgentById, loadAgentSources, updateAgentSources, isSourcesLoading } = useApp();
   const [error, setError] = useState<string|undefined>();
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string|null>(null);
+
+  const agent = getAgentById(agentId);
+  const sources = agent?.sources || [];
+  const loading = isSourcesLoading(agentId);
 
   function getStatusClass(status: string): string {
     const statusMap: Record<string, string> = {
@@ -40,31 +45,51 @@ export default function AgentSources(){
     });
   }
 
-  async function refresh(){
-    setLoading(true);
-    try { const r = await listDocs(agentId); setItems(r.items); }
-    catch { setError('Failed to load sources'); }
-    finally { setLoading(false); }
-  }
-  useEffect(()=>{ if (agentId) refresh(); },[agentId]);
+  useEffect(()=>{ if (agentId) {
+    loadAgentSources(agentId).catch(() => setError('Failed to load sources'));
+  }},[agentId]);
+  
   useEffect(()=>{
     const id = setInterval(()=>{
-      const hasActive = items.some(i => (i.status==='UPLOADED' || i.status==='PROCESSING'));
-      if (hasActive) refresh();
+      const hasActive = sources.some(i => (i.status==='UPLOADED' || i.status==='PROCESSING'));
+      if (hasActive) {
+        loadAgentSources(agentId).catch(() => {});
+      }
     }, 7000);
     return ()=> clearInterval(id);
-  }, [items.map(i=>i.status).join(',')]);
+  }, [sources.map(i=>i.status).join(','), agentId]);
+
+  // Show loading if we don't have sources yet and we're currently loading
+  const shouldShowLoading = loading || (sources.length === 0 && !agent?.sourcesLastFetched);
+
+  async function refresh(){
+    try { 
+      await loadAgentSources(agentId);
+    } catch { 
+      setError('Failed to refresh sources'); 
+    }
+  }
 
   async function saveEdit(id:string, patch: Partial<DocItem>){
     setBusy(true); setError(undefined);
-    try { await updateDoc(id, patch, agentId); setEditing(null); await refresh(); }
+    try { 
+      await updateDoc(id, patch, agentId); 
+      setEditing(null); 
+      await refresh(); 
+    }
     catch { setError('Update failed'); }
     finally { setBusy(false); }
   }
+  
   async function remove(id:string){
     if (!confirm('Delete this source?')) return;
     setBusy(true); setError(undefined);
-    try { await deleteDoc(id, agentId); await refresh(); }
+    try { 
+      await deleteDoc(id, agentId); 
+      // Update local state immediately
+      const updatedSources = sources.filter(item => item.docId !== id);
+      updateAgentSources(agentId, updatedSources);
+    }
     catch { setError('Delete failed'); }
     finally { setBusy(false); }
   }
@@ -90,7 +115,7 @@ export default function AgentSources(){
             <div>
               <h3 className="card-title" style={{margin: 0}}>Sources</h3>
               <div className="muted mini" style={{marginTop: 4}}>
-                {items.length} item{items.length !== 1 ? 's' : ''}
+                {shouldShowLoading ? '...' : `${sources.length} item${sources.length !== 1 ? 's' : ''}`}
               </div>
             </div>
           </div>
@@ -105,9 +130,12 @@ export default function AgentSources(){
           </div>
         )}
         
-        {loading ? (
-          <div className="muted" style={{padding: 40, textAlign: 'center'}}>Loading sources…</div>
-        ) : items.length === 0 ? (
+        {shouldShowLoading ? (
+          <>
+            <SourcesHeaderSkeleton />
+            <SourcesTableSkeleton />
+          </>
+        ) : sources.length === 0 ? (
           <div style={{textAlign: 'center', padding: 60}}>
             <div className="muted" style={{fontSize: 16, marginBottom: 8}}>No sources yet</div>
             <div className="muted mini">Get started by adding your first document or content source</div>
@@ -130,7 +158,7 @@ export default function AgentSources(){
                 </tr>
               </thead>
               <tbody>
-                {items.map(it => (
+                {sources.map(it => (
                   <tr key={it.docId}>
                     <td>
                       <div>
