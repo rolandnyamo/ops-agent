@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import Layout from '../../../components/Layout';
+import DocumentViewer from '../../../components/DocumentViewer';
 import { deleteDoc, updateDoc, type DocItem } from '../../../lib/api';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
@@ -13,6 +14,7 @@ export default function AgentSources(){
   const [error, setError] = useState<string|undefined>();
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string|null>(null);
+  const [viewingDocument, setViewingDocument] = useState<DocItem | null>(null);
 
   const agent = getAgentById(agentId);
   const sources = agent?.sources || [];
@@ -202,6 +204,15 @@ export default function AgentSources(){
                           </button>
                         ) : (
                           <>
+                            {it.fileKey && (
+                              <button 
+                                className="btn ghost" 
+                                onClick={() => setViewingDocument(it)} 
+                                style={{padding: '6px 12px', fontSize: 12}}
+                              >
+                                View
+                              </button>
+                            )}
                             <button className="btn ghost" onClick={()=>setEditing(it.docId)} style={{padding: '6px 12px', fontSize: 12}}>
                               Update
                             </button>
@@ -219,6 +230,16 @@ export default function AgentSources(){
           </div>
         )}
       </div>
+
+      {/* Document Viewer Modal */}
+      {viewingDocument && (
+        <DocumentViewer 
+          document={viewingDocument} 
+          isOpen={!!viewingDocument}
+          onClose={() => setViewingDocument(null)}
+          agentId={agentId}
+        />
+      )}
     </Layout>
   );
 }
