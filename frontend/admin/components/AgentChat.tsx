@@ -219,7 +219,7 @@ export default function AgentChat({ agentId }: AgentChatProps) {
                 <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
                   {message.citations.map((citation, idx) => (
                     <div key={idx} className="chip mini" style={{ fontSize: '11px' }}>
-                      {citation.docId.length > 12 ? citation.docId.slice(0, 12) + '...' : citation.docId}
+                      {citation.docId && citation.docId.length > 12 ? citation.docId.slice(0, 12) + '...' : (citation.docId || 'Unknown')}
                       {citation.chunk !== undefined && ` #${citation.chunk}`}
                       <span style={{ marginLeft: 4, opacity: 0.7 }}>
                         ({Math.round(citation.score * 100)}%)

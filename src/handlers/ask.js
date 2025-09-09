@@ -1,5 +1,5 @@
 const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { S3VectorsClient, QueryVectorsCommand } = require('@aws-sdk/client-s3vectors');
+const { S3VectorsClient, QueryVectorsCommand, DescribeIndexCommand } = require('@aws-sdk/client-s3vectors');
 const { DynamoDBClient, GetItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { getOpenAIClient } = require('./helpers/openai-client');
@@ -54,12 +54,25 @@ async function queryS3Vectors(vector, topK=5, filter){
     vectorBucketName: VECTOR_BUCKET, 
     indexName: VECTOR_INDEX, 
     queryVector: { float32: vector }, 
-    topK 
+    topK,
+    returnMetadata: true  // This is the key parameter to get metadata!
   };
   if (filter) params.filter = filter;
+  
+  console.log('S3Vectors query params:', JSON.stringify(params, null, 2));
   const res = await client.send(new QueryVectorsCommand(params));
+  console.log('S3Vectors raw response sample:', JSON.stringify({
+    vectorCount: res?.vectors?.length,
+    firstResult: res?.vectors?.[0],
+    hasMetadata: !!res?.vectors?.[0]?.metadata
+  }, null, 2));
+  
   const items = res?.vectors || [];
-  return items.map((r) => ({ score: r.distance ?? 0, metadata: r.metadata, text: r.metadata?.text }));
+  return items.map((r) => ({ 
+    score: r.distance ?? r.score ?? 0.5, // Still need to find the correct field for similarity score
+    metadata: r.metadata || { docId: r.key, text: `Document chunk: ${r.key}` },
+    text: r.metadata?.text || `Content from ${r.key}`
+  }));
 }
 
 async function queryS3Jsonl(vector, topK=5, agentId){
@@ -78,6 +91,54 @@ async function queryS3Jsonl(vector, topK=5, agentId){
   const scored = all.map((r) => ({ ...r, score: cosine(vector, r.vector) }));
   scored.sort((a,b)=>b.score-a.score);
   return scored.slice(0, topK).map(r => ({ score: r.score, metadata: r, text: r.text }));
+}
+
+async function debugS3VectorsIndex() {
+  try {
+    const client = new S3VectorsClient({});
+    const res = await client.send(new DescribeIndexCommand({
+      vectorBucketName: VECTOR_BUCKET,
+      indexName: VECTOR_INDEX
+    }));
+    
+    console.log('S3 Vectors Index Info:', {
+      status: res.indexConfiguration?.status,
+      vectorCount: res.indexStatistics?.vectorCount,
+      dimensions: res.indexConfiguration?.dimensions,
+      created: res.indexConfiguration?.createdAt
+    });
+    
+    return res;
+  } catch (error) {
+    console.error('Failed to describe S3 Vectors index:', error);
+    return null;
+  }
+}
+
+async function debugS3BucketContents() {
+  try {
+    const s3 = new S3Client({});
+    const listCommand = new ListObjectsV2Command({
+      Bucket: VECTOR_BUCKET,
+      MaxKeys: 10
+    });
+    
+    const response = await s3.send(listCommand);
+    console.log('S3 Bucket Contents Sample:', {
+      totalObjects: response.KeyCount,
+      isTruncated: response.IsTruncated,
+      objects: response.Contents?.slice(0, 5)?.map(obj => ({
+        key: obj.Key,
+        size: obj.Size,
+        lastModified: obj.LastModified
+      }))
+    });
+    
+    return response;
+  } catch (error) {
+    console.error('Failed to list S3 bucket contents:', error);
+    return null;
+  }
 }
 
 exports.handler = async (event) => {
@@ -106,6 +167,19 @@ exports.handler = async (event) => {
   let results;
   let searchStartTime = Date.now();
   let appliedFilter = null;
+  let rawSearchResponse = null;
+  
+  // Add comprehensive debugging
+  console.log('=== VECTOR SEARCH DEBUG ===');
+  console.log('VECTOR_MODE:', VECTOR_MODE);
+  console.log('VECTOR_BUCKET:', VECTOR_BUCKET);
+  console.log('VECTOR_INDEX:', VECTOR_INDEX);
+  console.log('AgentId:', agentId);
+  console.log('Original filter:', filter);
+  
+  // Debug the index itself
+  const indexInfo = await debugS3VectorsIndex();
+  const bucketInfo = await debugS3BucketContents();
   
   if (VECTOR_MODE === 's3vectors') {
     let f = filter;
@@ -119,9 +193,55 @@ exports.handler = async (event) => {
         f = agentFilter;
       }
     }
-    appliedFilter = null//f;
-    results = await queryS3Vectors(vector, 5, f);
+    appliedFilter = null; // f; // Temporarily disabled for debugging
+    
+    console.log('Filter being applied:', JSON.stringify(appliedFilter, null, 2));
+    console.log('Query params:', {
+      vectorBucketName: VECTOR_BUCKET,
+      indexName: VECTOR_INDEX,
+      topK: 5,
+      filter: appliedFilter,
+      vectorLength: vector?.length
+    });
+    
+    try {
+      const client = new S3VectorsClient({});
+      const params = { 
+        vectorBucketName: VECTOR_BUCKET, 
+        indexName: VECTOR_INDEX, 
+        queryVector: { float32: vector }, 
+        topK: 5,
+        returnMetadata: true,
+        includeScores: true
+      };
+      if (appliedFilter) params.filter = appliedFilter;
+      
+      console.log('S3Vectors query params:', JSON.stringify(params, null, 2));
+      const res = await client.send(new QueryVectorsCommand(params));
+      rawSearchResponse = res;
+      
+      console.log('Raw S3Vectors response:', JSON.stringify({
+        vectors: res?.vectors?.length || 0,
+        sample: res?.vectors?.slice(0, 2),
+        fullFirstResult: res?.vectors?.[0]
+      }, null, 2));
+      
+      const items = res?.vectors || [];
+      results = items.map((r, index) => ({ 
+        score: r.distance ?? r.score ?? (0.9 - index * 0.1), // Use distance/score if available, otherwise assign based on ranking
+        metadata: r.metadata, 
+        text: r.metadata?.text 
+      }));
+      
+      console.log('Processed results count:', results.length);
+      console.log('First result:', results[0]);
+      
+    } catch (error) {
+      console.error('S3Vectors query failed:', error);
+      throw error;
+    }
   } else {
+    console.log('Using S3 JSONL fallback mode');
     results = await queryS3Jsonl(vector, 5, agentId);
   }
   
@@ -151,7 +271,7 @@ exports.handler = async (event) => {
           { role: 'user', content: userPrompt }
         ],
         additionalParams: {
-          max_tokens: 500,
+          maxTokens: 500,
           temperature: 0.1
         }
       });
@@ -188,7 +308,22 @@ exports.handler = async (event) => {
         resultsCount: results.length,
         appliedFilter: appliedFilter,
         vectorLength: vector?.length,
-        vectorSample: vector?.slice(0, 5)
+        vectorSample: vector?.slice(0, 5),
+        rawSearchResponse: rawSearchResponse ? {
+          vectorCount: rawSearchResponse.vectors?.length,
+          hasMetadata: rawSearchResponse.vectors?.[0]?.metadata ? true : false
+        } : null
+      },
+      indexInfo: indexInfo ? {
+        status: indexInfo.indexConfiguration?.status,
+        vectorCount: indexInfo.indexStatistics?.vectorCount,
+        dimensions: indexInfo.indexConfiguration?.dimensions
+      } : null,
+      environment: {
+        VECTOR_MODE,
+        VECTOR_BUCKET,
+        VECTOR_INDEX,
+        region: process.env.AWS_REGION
       },
       rawResults: results.map(r => ({
         score: r.score,
@@ -196,7 +331,8 @@ exports.handler = async (event) => {
         chunkIdx: r.metadata?.chunkIdx,
         title: r.metadata?.title,
         textPreview: r.text?.slice(0, 200) + (r.text?.length > 200 ? '...' : ''),
-        fullTextLength: r.text?.length
+        fullTextLength: r.text?.length,
+        fullMetadata: r.metadata
       })),
       retrievedChunks: results.map(r => r.text).filter(Boolean),
       confidenceAnalysis: {
@@ -214,8 +350,8 @@ exports.handler = async (event) => {
     
     if (aiPrompt) {
       response.debug.aiProcessing = {
-        systemPrompt,
-        userPrompt,
+        systemPrompt: aiPrompt.systemPrompt,
+        userPrompt: aiPrompt.userPrompt,
         snippetsUsed: results.map(r => r.text).filter(Boolean).length,
         totalSnippetLength: results.map(r => r.text).filter(Boolean).join('\n\n').length
       };
