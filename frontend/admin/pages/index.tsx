@@ -1,33 +1,20 @@
 import Layout from '../components/Layout';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
-import { createAgent, getAgent, listAgents, type AgentSummary, type AgentSettings } from '../lib/api';
+import { useEffect, useState } from 'react';
+import { createAgent } from '../lib/api';
 import { useRouter } from 'next/router';
-
-type Card = { agentId: string; name: string; desc: string };
+import { useApp } from '../context/AppContext';
+import { AgentCardSkeleton } from '../components/Skeletons';
 
 export default function Home(){
   const router = useRouter();
-  const [items, setItems] = useState<Card[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { state, loadAgents } = useApp();
   const [error, setError] = useState<string|undefined>();
   const [creating, setCreating] = useState(false);
   const [useCase, setUseCase] = useState('');
 
   useEffect(() => {
-    (async () => {
-      setLoading(true); setError(undefined);
-      try{
-        const res = await listAgents();
-        const ids = res.items.map(i=>i.agentId);
-        const details = await Promise.all(ids.map(async id => {
-          try { const s = await getAgent(id); return { agentId: id, name: s.agentName || id, desc: s?.notes || '' }; }
-          catch { return { agentId: id, name: id, desc: '' }; }
-        }));
-        setItems(details);
-      }catch(e:any){ setError('Failed to load agents'); }
-      finally{ setLoading(false); }
-    })();
+    loadAgents().catch(() => setError('Failed to load agents'));
   }, []);
 
   async function onCreate(){
@@ -44,11 +31,15 @@ export default function Home(){
         <div className="card">
           <h3 className="card-title">Your Agents</h3>
           {error && <div className="chip" style={{borderColor:'#744'}}>{error}</div>}
-          {loading ? (
-            <div className="muted">Loading…</div>
+          {state.agentsLoading ? (
+            <div className="grid cols-2" style={{marginTop:8}}>
+              {[...Array(4)].map((_, i) => (
+                <AgentCardSkeleton key={i} />
+              ))}
+            </div>
           ) : (
             <div className="grid cols-2" style={{marginTop:8}}>
-              {items.map(a => (
+              {state.agents.map(a => (
                 <Link key={a.agentId} href={`/agents/${a.agentId}`} className="card" style={{display:'block'}}>
                   <div className="row" style={{justifyContent:'space-between', alignItems:'center'}}>
                     <div style={{fontWeight:600}}>{a.name}</div>
@@ -58,7 +49,7 @@ export default function Home(){
                   {!a.desc && <div className="muted mini" style={{marginTop:8}}>View details</div>}
                 </Link>
               ))}
-              {items.length===0 && (
+              {state.agents.length===0 && (
                 <div className="muted">No agents yet. Create one to get started.</div>
               )}
             </div>

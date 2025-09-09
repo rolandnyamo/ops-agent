@@ -11,7 +11,7 @@ async function openaiResponses(prompt, system){
       { role: 'system', content: system || 'You return only valid minified JSON.' },
       { role: 'user', content: prompt }
     ],
-    format: 'json'  // Use the correct format for JSON responses
+    format: 'json' 
   });
   
   if (!result.success) {
