@@ -104,7 +104,16 @@ exports.handler = async (event) => {
   let results;
   if (VECTOR_MODE === 's3vectors') {
     let f = filter;
-    if (agentId) f = f ? `(${f}) AND agentId = "${agentId}"` : `agentId = "${agentId}"`;
+    if (agentId) {
+      // Convert string filter to S3 Vectors object format
+      const agentFilter = { "agentId": { "$eq": agentId } };
+      if (f) {
+        // If there's an existing filter, combine them with $and
+        f = { "$and": [agentFilter, f] };
+      } else {
+        f = agentFilter;
+      }
+    }
     results = await queryS3Vectors(vector, 5, f);
   } else {
     results = await queryS3Jsonl(vector, 5, agentId);

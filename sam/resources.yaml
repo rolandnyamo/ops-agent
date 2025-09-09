@@ -354,7 +354,6 @@ Resources:
                 - s3:ListObjects
                 - s3:ListObjectsV2
               Resource:
-                - !Sub "${RawBucketName}/*"
                 - !Sub "arn:aws:s3:::${RawBucketName}"
       Events:
         ViewDoc:
