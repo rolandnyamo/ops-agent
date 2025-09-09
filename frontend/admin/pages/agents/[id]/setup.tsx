@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Layout from '../../../components/Layout';
 import { getSettings, putSettings, inferSettings, type Settings } from '../../../lib/api';
 import { useRouter } from 'next/router';
+import Link from 'next/link';
 
 export default function Setup(){
   const { query } = useRouter();
@@ -63,6 +64,22 @@ export default function Setup(){
 
   return (
     <Layout>
+      <div style={{ marginBottom: 24 }}>
+        <Link 
+          href={`/agents/${encodeURIComponent(agentId)}`} 
+          className="btn" 
+          style={{ 
+            display: 'inline-flex', 
+            alignItems: 'center', 
+            textDecoration: 'none',
+            fontSize: '14px',
+            padding: '8px 16px'
+          }}
+        >
+          ← Back to Agent
+        </Link>
+      </div>
+      
       <div className="grid cols-2">
         <div className="card">
           <h3 className="card-title">Describe Your Use Case</h3>
@@ -122,19 +139,7 @@ export default function Setup(){
             {saved && <div className="chip">Saved ✓</div>}
           </div>
         </div>
-
-        <div className="card">
-          <h3 className="card-title">Look & Feel</h3>
-          <p className="muted">Summer × Fall, soft gradients, crisp edges.</p>
-          <div className="row" style={{marginTop:8, gap:14}}>
-            <div className="chip"><span style={{display:'inline-block',height:12,width:12,borderRadius:6, background:'var(--summer)'}}/> Summer</div>
-            <div className="chip"><span style={{display:'inline-block',height:12,width:12,borderRadius:6, background:'var(--fall)'}}/> Fall</div>
-            <div className="chip"><span style={{display:'inline-block',height:12,width:12,borderRadius:6, background:'var(--sea)'}}/> Sea</div>
-          </div>
-          <div style={{marginTop:18}} className="muted mini">Design is mocked; values won’t persist yet.</div>
-        </div>
       </div>
     </Layout>
   );
 }
-

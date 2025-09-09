@@ -9,7 +9,7 @@ import { SourcesTableSkeleton, SourcesHeaderSkeleton } from '../../../components
 export default function AgentSources(){
   const { query, push } = useRouter();
   const agentId = String(query.id || '');
-  const { getAgentById, loadAgentSources, updateAgentSources, isSourcesLoading } = useApp();
+  const { getAgentById, loadAgentSources, updateAgentSources, isSourcesLoading, refreshAgentSources } = useApp();
   const [error, setError] = useState<string|undefined>();
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string|null>(null);
@@ -45,9 +45,13 @@ export default function AgentSources(){
     });
   }
 
-  useEffect(()=>{ if (agentId) {
-    loadAgentSources(agentId).catch(() => setError('Failed to load sources'));
-  }},[agentId]);
+  useEffect(()=>{ 
+    if (agentId) {
+      loadAgentSources(agentId).catch(() => setError('Failed to load sources'));
+      // Silent background refresh after initial load
+      setTimeout(() => { refreshAgentSources(agentId); }, 500);
+    }
+  },[agentId]);
   
   useEffect(()=>{
     const id = setInterval(()=>{

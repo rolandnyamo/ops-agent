@@ -8,7 +8,7 @@ import { AgentDetailsSkeleton } from '../../../components/Skeletons';
 export default function AgentDetail(){
   const { query } = useRouter();
   const agentId = String(query.id || '');
-  const { getAgentById, loadAgentDetails, isAgentLoading, setCurrentAgent } = useApp();
+  const { getAgentById, loadAgentDetails, isAgentLoading, setCurrentAgent, refreshAgentDetails } = useApp();
   const [error, setError] = useState<string|undefined>();
   
   const agent = getAgentById(agentId);
@@ -18,10 +18,28 @@ export default function AgentDetail(){
     if (!agentId) return;
     setCurrentAgent(agentId);
     loadAgentDetails(agentId).catch(() => setError('Failed to load agent'));
+    // Silent background refresh after initial load
+    setTimeout(() => { refreshAgentDetails(agentId); }, 500);
   },[agentId]);
 
   return (
     <Layout>
+      <div style={{ marginBottom: 24 }}>
+        <Link 
+          href="/" 
+          className="btn" 
+          style={{ 
+            display: 'inline-flex', 
+            alignItems: 'center', 
+            textDecoration: 'none',
+            fontSize: '14px',
+            padding: '8px 16px'
+          }}
+        >
+          ← Back to Agents
+        </Link>
+      </div>
+      
       <div className="grid cols-2">
         <div className="card">
           <h3 className="card-title">{agent?.settings?.agentName || agent?.name || 'Agent'}</h3>
