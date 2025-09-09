@@ -27,9 +27,13 @@ type AppContextType = {
   loadAgentSources: (agentId: string) => Promise<void>;
   updateAgentSources: (agentId: string, sources: DocItem[]) => void;
   setCurrentAgent: (agentId: string) => void;
+  forceRefreshAgents: () => Promise<void>;
   // Helper flags
   isAgentLoading: (agentId: string) => boolean;
   isSourcesLoading: (agentId: string) => boolean;
+  // Silent refresh
+  refreshAgentSources: (agentId: string) => Promise<void>;
+  refreshAgentDetails: (agentId: string) => Promise<void>;
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -120,43 +124,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const loadAgentDetails = async (agentId: string) => {
-    const existingAgent = getAgentById(agentId);
-    
-    // If we already have settings, no need to fetch
-    if (existingAgent?.settings) {
-      return;
-    }
-
+    // Always fetch agent details to ensure we have the latest data
     setAgentLoading(agentId, true);
 
     try {
       const settings = await getAgent(agentId);
       
-      setState(prev => ({
-        ...prev,
-        agents: prev.agents.map(agent => 
-          agent.agentId === agentId 
-            ? { 
-                ...agent, 
-                settings,
-                name: settings.agentName || agent.name,
-                desc: settings.notes || agent.desc 
-              }
-            : agent
-        )
-      }));
+      setState(prev => {
+        const existingIndex = prev.agents.findIndex(agent => agent.agentId === agentId);
+        
+        if (existingIndex >= 0) {
+          // Update existing agent
+          return {
+            ...prev,
+            agents: prev.agents.map(agent => 
+              agent.agentId === agentId 
+                ? { 
+                    ...agent, 
+                    settings,
+                    name: settings.agentName || agent.name,
+                    desc: settings.notes || agent.desc 
+                  }
+                : agent
+            )
+          };
+        } else {
+          // Add new agent to the list
+          return {
+            ...prev,
+            agents: [...prev.agents, {
+              agentId,
+              name: settings.agentName || agentId,
+              desc: settings.notes || '',
+              settings
+            }]
+          };
+        }
+      });
     } catch (error) {
-      // If agent doesn't exist in our list, add it
-      const settings = await getAgent(agentId);
-      setState(prev => ({
-        ...prev,
-        agents: [...prev.agents, {
-          agentId,
-          name: settings.agentName || agentId,
-          desc: settings.notes || '',
-          settings
-        }]
-      }));
+      throw error;
     } finally {
       setAgentLoading(agentId, false);
     }
@@ -214,6 +220,55 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState(prev => ({ ...prev, currentAgentId: agentId }));
   };
 
+  // Silent background refresh for sources
+  const refreshAgentSources = async (agentId: string) => {
+    try {
+      const res = await listDocs(agentId);
+      setState(prev => ({
+        ...prev,
+        agents: prev.agents.map(agent => 
+          agent.agentId === agentId 
+            ? { 
+                ...agent, 
+                sources: res.items,
+                sourcesLastFetched: Date.now() 
+              }
+            : agent
+        )
+      }));
+    } catch (error) {
+      // ignore
+    }
+  };
+
+  // Silent background refresh for agent details
+  const refreshAgentDetails = async (agentId: string) => {
+    try {
+      const settings = await getAgent(agentId);
+      setState(prev => ({
+        ...prev,
+        agents: prev.agents.map(agent => 
+          agent.agentId === agentId 
+            ? { 
+                ...agent, 
+                settings,
+                name: settings.agentName || agent.name,
+                desc: settings.notes || agent.desc 
+              }
+            : agent
+        )
+      }));
+    } catch (error) {
+      // ignore
+    }
+  };
+
+  // Force refresh agents list (for when new agents are created)
+  const forceRefreshAgents = async () => {
+    setState(prev => ({ ...prev, agentsLastFetched: 0 }));
+    await loadAgents();
+  };
+
   return (
     <AppContext.Provider value={{
       state,
@@ -225,6 +280,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCurrentAgent,
       isAgentLoading,
       isSourcesLoading,
+      refreshAgentSources,
+      refreshAgentDetails,
+      forceRefreshAgents,
     }}>
       {children}
     </AppContext.Provider>

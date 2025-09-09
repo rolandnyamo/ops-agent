@@ -4,11 +4,12 @@ import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { AgentDetailsSkeleton } from '../../../components/Skeletons';
+import AgentChat from '../../../components/AgentChat';
 
 export default function AgentDetail(){
   const { query } = useRouter();
   const agentId = String(query.id || '');
-  const { getAgentById, loadAgentDetails, isAgentLoading, setCurrentAgent } = useApp();
+  const { getAgentById, loadAgentDetails, isAgentLoading, setCurrentAgent, refreshAgentDetails } = useApp();
   const [error, setError] = useState<string|undefined>();
   
   const agent = getAgentById(agentId);
@@ -18,11 +19,29 @@ export default function AgentDetail(){
     if (!agentId) return;
     setCurrentAgent(agentId);
     loadAgentDetails(agentId).catch(() => setError('Failed to load agent'));
+    // Silent background refresh after initial load
+    setTimeout(() => { refreshAgentDetails(agentId); }, 500);
   },[agentId]);
 
   return (
     <Layout>
-      <div className="grid cols-2">
+      <div style={{ marginBottom: 24 }}>
+        <Link 
+          href="/" 
+          className="btn" 
+          style={{ 
+            display: 'inline-flex', 
+            alignItems: 'center', 
+            textDecoration: 'none',
+            fontSize: '14px',
+            padding: '8px 16px'
+          }}
+        >
+          ← Back to Agents
+        </Link>
+      </div>
+      
+      <div className="grid cols-2" style={{ marginBottom: 24 }}>
         <div className="card">
           <h3 className="card-title">{agent?.settings?.agentName || agent?.name || 'Agent'}</h3>
           <div className="muted mini" style={{marginBottom:8}}>ID: {agentId}</div>
@@ -49,6 +68,9 @@ export default function AgentDetail(){
           <div className="muted mini" style={{marginTop:8}}>Add documents, review sources, and configure settings for this agent.</div>
         </div>
       </div>
+      
+      {/* Chat Component */}
+      <AgentChat agentId={agentId} />
     </Layout>
   );
 }

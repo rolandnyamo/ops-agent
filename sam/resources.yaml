@@ -329,6 +329,42 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /docs/{docId}
             Method: DELETE
+
+  ViewDocFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-view-doc"
+      CodeUri: ../src
+      Handler: handlers/viewDoc.handler
+      Timeout: 30
+      Environment:
+        Variables:
+          var1: value1
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+              Resource:
+                - !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableArn' }
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListObjects
+                - s3:ListObjectsV2
+              Resource:
+                - !Sub "${RawBucketName}/*"
+                - !Sub "arn:aws:s3:::${RawBucketName}"
+      Events:
+        ViewDoc:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /docs/view/{docId}
+            Method: GET
+            Auth:
+              Authorizer: !If [ IsAuthEnabled, AdminCognitoAuth, AWS::NoValue ]
             
   AgentsFn:
     Type: AWS::Serverless::Function
