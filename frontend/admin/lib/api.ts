@@ -139,3 +139,12 @@ export async function createAgent(useCase?: string){
   if (!res.ok) throw new Error(`create agent ${res.status}`);
   return res.json() as Promise<{ agentId: string }>;
 }
+
+export async function deleteAgent(agentId: string){
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}`, { 
+    method: 'DELETE', 
+    headers: { ...(await authHeader()) } 
+  });
+  if (!res.ok) throw new Error(`delete agent ${res.status}`);
+  return res.json() as Promise<{ success: boolean }>;
+}

@@ -89,11 +89,14 @@ exports.handler = async (event) => {
         contentType = typeMap[ext] || 'application/octet-stream';
       }
 
+      // Sanitize filename for HTTP header (remove non-ASCII characters)
+      const sanitizedTitle = (doc.title || 'document').replace(/[^\x20-\x7E]/g, '_');
+
       return {
         statusCode: 200,
         headers: {
           'Content-Type': contentType || 'application/octet-stream',
-          'Content-Disposition': `inline; filename="${doc.title || 'document'}"`,
+          'Content-Disposition': `inline; filename="${sanitizedTitle}"`,
           'Cache-Control': 'public, max-age=3600'
         },
         body: buffer.toString('base64'),
@@ -150,11 +153,14 @@ exports.handler = async (event) => {
             contentType = typeMap[ext] || 'application/octet-stream';
           }
 
+          // Sanitize filename for HTTP header (remove non-ASCII characters)
+          const sanitizedTitle = (doc.title || 'document').replace(/[^\x20-\x7E]/g, '_');
+
           return {
             statusCode: 200,
             headers: {
               'Content-Type': contentType || 'application/octet-stream',
-              'Content-Disposition': `inline; filename="${doc.title || 'document'}"`,
+              'Content-Disposition': `inline; filename="${sanitizedTitle}"`,
               'Cache-Control': 'public, max-age=3600'
             },
             body: buffer.toString('base64'),

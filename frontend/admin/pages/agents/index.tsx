@@ -1,7 +1,7 @@
 import Layout from '../../components/Layout';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { createAgent, getAgent, listAgents } from '../../lib/api';
+import { createAgent, getAgent, listAgents, deleteAgent } from '../../lib/api';
 import { useRouter } from 'next/router';
 
 export default function AgentsHome(){
@@ -10,6 +10,7 @@ export default function AgentsHome(){
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string|undefined>();
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<string|null>(null);
   const [useCase, setUseCase] = useState('');
 
   useEffect(()=>{
@@ -35,6 +36,19 @@ export default function AgentsHome(){
     finally{ setCreating(false); }
   }
 
+  async function onDelete(agentId: string, event: React.MouseEvent){
+    event.preventDefault(); // Prevent link navigation
+    if (deleting || !confirm(`Delete agent "${agentId}"? This cannot be undone.`)) return;
+    
+    setDeleting(agentId); setError(undefined);
+    try{ 
+      await deleteAgent(agentId); 
+      setItems(items.filter(a => a.agentId !== agentId));
+    }
+    catch(e:any){ setError('Delete failed'); }
+    finally{ setDeleting(null); }
+  }
+
   return (
     <Layout>
       <div className="grid cols-2">
@@ -44,14 +58,33 @@ export default function AgentsHome(){
           {loading ? <div className="muted">Loading…</div> : (
             <div className="grid cols-2" style={{marginTop:8}}>
               {items.map(a => (
-                <Link key={a.agentId} href={`/agents/${a.agentId}`} className="card" style={{display:'block'}}>
-                  <div className="row" style={{justifyContent:'space-between', alignItems:'center'}}>
-                    <div style={{fontWeight:600}}>{a.name}</div>
-                    <div className="chip mini">{a.agentId}</div>
-                  </div>
-                  {a.desc && <div className="muted" style={{marginTop:8}}>{a.desc}</div>}
-                  {!a.desc && <div className="muted mini" style={{marginTop:8}}>View details</div>}
-                </Link>
+                <div key={a.agentId} className="card" style={{position: 'relative'}}>
+                  <Link href={`/agents/${a.agentId}`} style={{display:'block', textDecoration: 'none', color: 'inherit'}}>
+                    <div className="row" style={{justifyContent:'space-between', alignItems:'center'}}>
+                      <div style={{fontWeight:600}}>{a.name}</div>
+                      <div className="chip mini">{a.agentId}</div>
+                    </div>
+                    {a.desc && <div className="muted" style={{marginTop:8}}>{a.desc}</div>}
+                    {!a.desc && <div className="muted mini" style={{marginTop:8}}>View details</div>}
+                  </Link>
+                  <button 
+                    onClick={(e) => onDelete(a.agentId, e)}
+                    disabled={deleting === a.agentId}
+                    className="btn ghost"
+                    style={{
+                      position: 'absolute',
+                      top: '8px',
+                      right: '8px',
+                      padding: '4px 8px',
+                      fontSize: '12px',
+                      color: 'var(--danger)',
+                      borderColor: 'rgba(220,38,38,.3)',
+                      minWidth: 'auto'
+                    }}
+                  >
+                    {deleting === a.agentId ? '...' : '×'}
+                  </button>
+                </div>
               ))}
               {items.length===0 && (
                 <div className="muted">No agents yet. Create one to get started.</div>

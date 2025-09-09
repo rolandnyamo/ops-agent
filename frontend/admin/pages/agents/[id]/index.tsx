@@ -5,12 +5,14 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { AgentDetailsSkeleton } from '../../../components/Skeletons';
 import AgentChat from '../../../components/AgentChat';
+import { deleteAgent } from '../../../lib/api';
 
 export default function AgentDetail(){
-  const { query } = useRouter();
+  const { query, push } = useRouter();
   const agentId = String(query.id || '');
   const { getAgentById, loadAgentDetails, isAgentLoading, setCurrentAgent, refreshAgentDetails } = useApp();
   const [error, setError] = useState<string|undefined>();
+  const [deleting, setDeleting] = useState(false);
   
   const agent = getAgentById(agentId);
   const loading = isAgentLoading(agentId);
@@ -22,6 +24,20 @@ export default function AgentDetail(){
     // Silent background refresh after initial load
     setTimeout(() => { refreshAgentDetails(agentId); }, 500);
   },[agentId]);
+
+  async function onDelete(){
+    if (deleting || !confirm(`Delete agent "${agent?.settings?.agentName || agentId}"? This will delete all settings and associated data. This cannot be undone.`)) return;
+    
+    setDeleting(true); setError(undefined);
+    try{ 
+      await deleteAgent(agentId); 
+      await push('/');
+    }
+    catch(e:any){ 
+      setError('Delete failed'); 
+      setDeleting(false);
+    }
+  }
 
   return (
     <Layout>
@@ -66,6 +82,22 @@ export default function AgentDetail(){
             <Link href={`/agents/${agentId}/setup`} className="btn ghost">Setup</Link>
           </div>
           <div className="muted mini" style={{marginTop:8}}>Add documents, review sources, and configure settings for this agent.</div>
+          
+          <div style={{marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--line)'}}>
+            <button 
+              onClick={onDelete}
+              disabled={deleting}
+              className="btn ghost"
+              style={{
+                color: 'var(--danger)',
+                borderColor: 'rgba(220,38,38,.3)',
+                fontSize: '14px'
+              }}
+            >
+              {deleting ? 'Deleting...' : 'Delete Agent'}
+            </button>
+            <div className="muted mini" style={{marginTop:4}}>Permanently delete this agent and all associated data.</div>
+          </div>
         </div>
       </div>
       

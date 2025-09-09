@@ -1,4 +1,4 @@
-const { DynamoDBClient, PutItemCommand, GetItemCommand, QueryCommand } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBClient, PutItemCommand, GetItemCommand, QueryCommand, DeleteItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const crypto = require('node:crypto');
 const { z } = require('zod');
@@ -77,6 +77,27 @@ exports.handler = async (event) => {
     const key = { PK: `AGENT#${agentIdParam}`, SK: 'SETTINGS#V1' };
     const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall(key) }));
     return ok(200, res.Item ? unmarshall(res.Item).data : {});
+  }
+
+  if (method === 'DELETE' && agentIdParam) {
+    try {
+      // Delete agent settings
+      await ddb.send(new DeleteItemCommand({ 
+        TableName: TABLE, 
+        Key: marshall({ PK: `AGENT#${agentIdParam}`, SK: 'SETTINGS#V1' }) 
+      }));
+      
+      // Delete agent entry
+      await ddb.send(new DeleteItemCommand({ 
+        TableName: TABLE, 
+        Key: marshall({ PK: `AGENT#${agentIdParam}`, SK: 'AGENT' }) 
+      }));
+      
+      return ok(200, { success: true, agentId: agentIdParam });
+    } catch (error) {
+      console.error('Error deleting agent:', error);
+      return ok(500, { message: 'Failed to delete agent' });
+    }
   }
 
   return ok(405, { message: 'Method Not Allowed' });

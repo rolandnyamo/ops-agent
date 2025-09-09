@@ -354,7 +354,7 @@ Resources:
                 - s3:ListObjects
                 - s3:ListObjectsV2
               Resource:
-                - !Sub "arn:aws:s3:::${RawBucketName}"
+                - !Sub "arn:aws:s3:::${RawBucketName}/*"
       Events:
         ViewDoc:
           Type: HttpApi
@@ -403,6 +403,12 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /agents/{agentId}
             Method: GET
+        DeleteAgent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /agents/{agentId}
+            Method: DELETE
   InferFn:
     Type: AWS::Serverless::Function
     Properties:
