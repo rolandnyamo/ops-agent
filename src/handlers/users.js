@@ -170,7 +170,8 @@ exports.handler = async (event) => {
         }
       
       case 'POST':
-        if (event.path?.includes('/invite') || event.resource?.includes('/invite')) {
+        const path = event.path || event.requestContext?.http?.path || '';
+        if (path.includes('/invite')) {
           return await inviteUser(body);
         }
         break;
@@ -185,9 +186,10 @@ exports.handler = async (event) => {
           };
         }
         
-        if (event.path?.includes('/activate') || event.resource?.includes('/activate')) {
+        const putPath = event.path || event.requestContext?.http?.path || '';
+        if (putPath.includes('/activate')) {
           return await activateUser(userId);
-        } else if (event.path?.includes('/deactivate') || event.resource?.includes('/deactivate')) {
+        } else if (putPath.includes('/deactivate')) {
           return await deactivateUser(userId);
         }
         break;
