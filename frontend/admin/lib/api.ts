@@ -112,10 +112,24 @@ export async function inferDoc(filename: string, sampleText: string, categories?
   return res.json() as Promise<{ title: string; category: string; audience: string; year: number|string; version: string; description: string } >;
 }
 
-export async function ask(q: string, agentId?: string, filter?: string){
-  const res = await fetch(`${cfg.apiBase}/qa`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ q, agentId, filter }) });
+export async function ask(q: string, agentId?: string, filter?: string, debug?: boolean){
+  const res = await fetch(`${cfg.apiBase}/qa`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ q, agentId, filter, debug }) });
   if (!res.ok) throw new Error(`qa ${res.status}`);
-  return res.json() as Promise<{ answer: string; grounded: boolean; confidence: number; citations: Array<{docId:string; chunk:number; score:number}> } >;
+  return res.json() as Promise<{ 
+    answer: string; 
+    grounded: boolean; 
+    confidence: number; 
+    citations: Array<{docId:string; chunk:number; score:number}>;
+    debug?: {
+      timing: { total: number; vectorSearch: number; aiGeneration: number; embedding: number };
+      vectorSearch: { resultsCount: number; appliedFilter: any; vectorLength: number; vectorSample: number[] };
+      rawResults: Array<{ score: number; docId: string; chunkIdx: number; title: string; textPreview: string; fullTextLength: number }>;
+      retrievedChunks: string[];
+      confidenceAnalysis: { threshold: number; topScore: number; isGrounded: boolean; scoresAboveThreshold: number };
+      agentSettings: { agentId: string; confidenceThreshold: number; fallbackMessage: string };
+      aiProcessing?: { systemPrompt: string; userPrompt: string; snippetsUsed: number; totalSnippetLength: number };
+    };
+  }>;
 }
 
 // Agents API

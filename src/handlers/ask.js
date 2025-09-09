@@ -81,10 +81,12 @@ async function queryS3Jsonl(vector, topK=5, agentId){
 }
 
 exports.handler = async (event) => {
+  const startTime = Date.now();
   const body = event?.body && typeof event.body === 'string' ? JSON.parse(event.body) : event?.body || {};
   const q = body?.q;
   const filter = body?.filter;
   const agentId = body?.agentId;
+  const debug = body?.debug === true;
   if (!q) return { statusCode: 400, body: JSON.stringify({ message: 'q is required' }) };
 
   // Get agent settings to use confidence threshold and fallback message
@@ -102,6 +104,9 @@ exports.handler = async (event) => {
   }
   
   let results;
+  let searchStartTime = Date.now();
+  let appliedFilter = null;
+  
   if (VECTOR_MODE === 's3vectors') {
     let f = filter;
     if (agentId) {
@@ -114,22 +119,29 @@ exports.handler = async (event) => {
         f = agentFilter;
       }
     }
+    appliedFilter = null//f;
     results = await queryS3Vectors(vector, 5, f);
   } else {
     results = await queryS3Jsonl(vector, 5, agentId);
   }
-
+  
+  const searchTime = Date.now() - searchStartTime;
   const confidence = results[0]?.score || 0;
   const grounded = results.length > 0 && confidence >= agentSettings.confidenceThreshold;
   const citations = results.slice(0,3).map(r => ({ docId: r.metadata?.docId, chunk: r.metadata?.chunkIdx, score: Number((r.score||0).toFixed(3)) }));
 
   let answer;
+  let aiPrompt = null;
+  let aiStartTime = Date.now();
+  
   if (grounded) {
     const snippets = results.map(r => r.text).filter(Boolean).slice(0,3).join('\n\n');
     
     // Use the OpenAI helper to generate a comprehensive answer
     const systemPrompt = `You are a helpful assistant that answers questions based on provided documentation. Use the context provided to give accurate, helpful responses. If the context doesn't fully answer the question, acknowledge what information is available and what might be missing.`;
     const userPrompt = `Context from documentation:\n\n${snippets}\n\nQuestion: ${q}\n\nPlease provide a helpful answer based on the above context.`;
+    
+    aiPrompt = { systemPrompt, userPrompt };
     
     try {
       const response = await generateText({
@@ -153,6 +165,62 @@ exports.handler = async (event) => {
     // Use agent-specific fallback message when confidence is too low or no results
     answer = agentSettings.fallbackMessage;
   }
+  
+  const aiTime = Date.now() - aiStartTime;
+  const totalTime = Date.now() - startTime;
 
-  return { statusCode: 200, body: JSON.stringify({ answer, grounded, confidence: Number(confidence.toFixed(3)), citations }) };
+  const response = { 
+    answer, 
+    grounded, 
+    confidence: Number(confidence.toFixed(3)), 
+    citations 
+  };
+
+  if (debug) {
+    response.debug = {
+      timing: {
+        total: totalTime,
+        vectorSearch: searchTime,
+        aiGeneration: aiTime,
+        embedding: searchStartTime - startTime
+      },
+      vectorSearch: {
+        resultsCount: results.length,
+        appliedFilter: appliedFilter,
+        vectorLength: vector?.length,
+        vectorSample: vector?.slice(0, 5)
+      },
+      rawResults: results.map(r => ({
+        score: r.score,
+        docId: r.metadata?.docId,
+        chunkIdx: r.metadata?.chunkIdx,
+        title: r.metadata?.title,
+        textPreview: r.text?.slice(0, 200) + (r.text?.length > 200 ? '...' : ''),
+        fullTextLength: r.text?.length
+      })),
+      retrievedChunks: results.map(r => r.text).filter(Boolean),
+      confidenceAnalysis: {
+        threshold: agentSettings.confidenceThreshold,
+        topScore: confidence,
+        isGrounded: grounded,
+        scoresAboveThreshold: results.filter(r => r.score >= agentSettings.confidenceThreshold).length
+      },
+      agentSettings: {
+        agentId,
+        confidenceThreshold: agentSettings.confidenceThreshold,
+        fallbackMessage: agentSettings.fallbackMessage
+      }
+    };
+    
+    if (aiPrompt) {
+      response.debug.aiProcessing = {
+        systemPrompt,
+        userPrompt,
+        snippetsUsed: results.map(r => r.text).filter(Boolean).length,
+        totalSnippetLength: results.map(r => r.text).filter(Boolean).join('\n\n').length
+      };
+    }
+  }
+
+  return { statusCode: 200, body: JSON.stringify(response) };
 };

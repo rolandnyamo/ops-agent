@@ -111,11 +111,11 @@ async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
         audience: docMeta?.audience || '',
         chunkIdx: i,
         text: truncatedText,
+        agentId: docMeta?.agentId || 'default',
         
         // Unfilterable metadata - stored but not indexed (larger fields)
         // unfilterable: {
         //   docId: docId,
-        //   agentId: docMeta?.agentId || 'default',
         //   year: docMeta?.year || '',
         //   version: docMeta?.version || '',
         //   originalTextLength: chunks[i]?.length || 0,
