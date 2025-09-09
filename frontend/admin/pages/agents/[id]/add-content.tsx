@@ -161,7 +161,23 @@ export default function AddContent(){
       )}
       
       <div className="card">
-        <h3 className="card-title">Add Content</h3>
+        <div className="row" style={{alignItems: 'center', marginBottom: 16}}>
+          <button 
+            onClick={() => push(`/agents/${agentId}/sources`)}
+            className="btn ghost"
+            style={{
+              padding: '8px 12px',
+              marginRight: 16,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 14
+            }}
+          >
+            ← Back to Sources
+          </button>
+          <h3 className="card-title" style={{margin: 0}}>Add Content</h3>
+        </div>
         <div className="row" style={{gap:8, marginBottom:24}}>
           <StepPill n={1} active={step===1} label="Source" onClick={()=>setStep(1)} />
           <StepPill n={2} active={step===2} label="Details" onClick={()=>setStep(2)} />

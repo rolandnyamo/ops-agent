@@ -5,7 +5,7 @@ import { useRouter } from 'next/router';
 import Link from 'next/link';
 
 export default function AgentSources(){
-  const { query } = useRouter();
+  const { query, push } = useRouter();
   const agentId = String(query.id || '');
   const [items, setItems] = useState<DocItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,14 +73,28 @@ export default function AgentSources(){
     <Layout>
       <div className="card">
         <div className="row" style={{justifyContent:'space-between', alignItems:'center', marginBottom: 24}}>
-          <div>
-            <h3 className="card-title" style={{margin: 0}}>Sources</h3>
-            <div className="muted mini" style={{marginTop: 4}}>
-              {items.length} item{items.length !== 1 ? 's' : ''}
+          <div className="row" style={{alignItems: 'center', gap: 16}}>
+            <button 
+              onClick={() => push(`/agents/${agentId}`)}
+              className="btn ghost"
+              style={{
+                padding: '8px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 14
+              }}
+            >
+              ← Back to Agent
+            </button>
+            <div>
+              <h3 className="card-title" style={{margin: 0}}>Sources</h3>
+              <div className="muted mini" style={{marginTop: 4}}>
+                {items.length} item{items.length !== 1 ? 's' : ''}
+              </div>
             </div>
           </div>
-          <div className="row" style={{gap: 12}}>
-            <button className="btn ghost">Add new</button>
+          <div>
             <Link href={`/agents/${agentId}/add-content`} className="btn">Add Source</Link>
           </div>
         </div>
