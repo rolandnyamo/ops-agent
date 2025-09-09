@@ -9,7 +9,16 @@ export default function Setup(){
   const [agentName, setAgentName] = useState('Agent');
   const [confidence, setConfidence] = useState(0.45);
   const [fallback, setFallback] = useState('Sorry, I could not find this in the documentation.');
-  const [systemPrompt, setSystemPrompt] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState(`You are a helpful assistant that provides concise, well-formatted answers based on documentation. 
+
+Guidelines:
+- Keep answers brief and to the point
+- Use bullet points or lists when presenting multiple items
+- Start with the most important/direct information
+- Format numbers and prices clearly
+- If the context is incomplete, briefly mention what's missing
+
+Format your response to be easily scannable.`);
   const [orgType, setOrgType] = useState('');
   const [categories, setCategories] = useState<string[]>([]);
   const [audiences, setAudiences] = useState<string[]>(['All']);
@@ -31,7 +40,16 @@ export default function Setup(){
         setAgentName(s.agentName || 'Agent');
         setConfidence(typeof s.confidenceThreshold === 'number' ? s.confidenceThreshold : 0.45);
         setFallback(s.fallbackMessage || fallback);
-        setSystemPrompt(s.systemPrompt || '');
+        setSystemPrompt(s.systemPrompt || `You are a helpful assistant that provides concise, well-formatted answers based on documentation. 
+
+Guidelines:
+- Keep answers brief and to the point
+- Use bullet points or lists when presenting multiple items
+- Start with the most important/direct information
+- Format numbers and prices clearly
+- If the context is incomplete, briefly mention what's missing
+
+Format your response to be easily scannable.`);
         setOrgType((s as any).organizationType || '');
         setCategories(((s as any).categories || []) as string[]);
         setAudiences(((s as any).audiences || ['All']) as string[]);
@@ -175,12 +193,13 @@ export default function Setup(){
           <label style={{marginTop:12}}>Fallback Message</label>
           <textarea className="textarea" rows={3} value={fallback} onChange={e=>setFallback(e.target.value)} />
           
-          <label style={{marginTop:12}}>System Prompt</label>
-          <textarea className="textarea" rows={8} placeholder="Enter the system prompt that will guide how the AI responds to questions..." 
-            value={systemPrompt} onChange={e=>setSystemPrompt(e.target.value)} />
-          <div className="muted mini" style={{marginTop:4}}>This prompt will be sent to the AI to define its behavior and response style.</div>
+          <label style={{marginTop:16, fontWeight:'600'}}>🤖 AI System Prompt</label>
+          <div className="muted mini" style={{marginBottom:8}}>This prompt defines how your AI assistant behaves and responds to questions. Edit it to customize the AI's personality, tone, and response format.</div>
+          <textarea className="textarea" rows={10} placeholder="Enter the system prompt that will guide how the AI responds to questions..." 
+            value={systemPrompt} onChange={e=>setSystemPrompt(e.target.value)} 
+            style={{fontFamily: 'Monaco, Consolas, "Lucida Console", monospace', fontSize: '13px'}} />
           
-          <div className="row" style={{marginTop:12}}>
+          <div className="row" style={{marginTop:16}}>
             <div style={{flex:1}}>
               <label>Organization Type</label>
               <input className="input" value={orgType} onChange={e=>setOrgType(e.target.value)} />
