@@ -15,6 +15,7 @@ export type Settings = {
   agentName: string;
   confidenceThreshold: number;
   fallbackMessage: string;
+  systemPrompt?: string;
   allowedOrigins: string[];
   notifyEmails: string[];
   updatedAt?: string;

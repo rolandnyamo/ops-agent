@@ -31,7 +31,17 @@ async function getAgentSettings(agentId) {
   return {
     agentName: 'Agent',
     confidenceThreshold: 0.45,
-    fallbackMessage: 'Sorry, I could not find this in the documentation.'
+    fallbackMessage: 'Sorry, I could not find this in the documentation.',
+    systemPrompt: `You are a helpful assistant that provides concise, well-formatted answers based on documentation. 
+
+Guidelines:
+- Keep answers brief and to the point
+- Use bullet points or lists when presenting multiple items
+- Start with the most important/direct information
+- Format numbers and prices clearly
+- If the context is incomplete, briefly mention what's missing
+
+Format your response to be easily scannable.`
   };
 }
 
@@ -261,8 +271,8 @@ exports.handler = async (event) => {
   if (grounded) {
     const snippets = results.map(r => r.text).filter(Boolean).slice(0,3).join('\n\n');
     
-    // Use the OpenAI helper to generate a concise, well-formatted answer
-    const systemPrompt = `You are a helpful assistant that provides concise, well-formatted answers based on documentation. 
+    // Use the system prompt from agent settings
+    const systemPrompt = agentSettings.systemPrompt || `You are a helpful assistant that provides concise, well-formatted answers based on documentation. 
 
 Guidelines:
 - Keep answers brief and to the point

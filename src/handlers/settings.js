@@ -9,6 +9,16 @@ function defaults(){
     agentName: 'Agent',
     confidenceThreshold: 0.45,
     fallbackMessage: 'Sorry, I could not find this in the documentation.',
+    systemPrompt: `You are a helpful assistant that provides concise, well-formatted answers based on documentation. 
+
+Guidelines:
+- Keep answers brief and to the point
+- Use bullet points or lists when presenting multiple items
+- Start with the most important/direct information
+- Format numbers and prices clearly
+- If the context is incomplete, briefly mention what's missing
+
+Format your response to be easily scannable.`,
     organizationType: '',
     categories: [],
     audiences: ['All'],
@@ -30,6 +40,7 @@ function validate(input){
   if (typeof input.agentName === 'string' && input.agentName.trim()) out.agentName = input.agentName.trim();
   if (typeof input.confidenceThreshold === 'number' && input.confidenceThreshold >= 0 && input.confidenceThreshold <= 1) out.confidenceThreshold = input.confidenceThreshold;
   if (typeof input.fallbackMessage === 'string') out.fallbackMessage = input.fallbackMessage;
+  if (typeof input.systemPrompt === 'string') out.systemPrompt = input.systemPrompt;
   if (typeof input.organizationType === 'string') out.organizationType = input.organizationType;
   if (Array.isArray(input.categories)) out.categories = input.categories.filter(x => typeof x === 'string');
   if (Array.isArray(input.audiences)) out.audiences = input.audiences.filter(x => typeof x === 'string');
