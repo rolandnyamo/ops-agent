@@ -113,14 +113,14 @@ async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
         text: truncatedText,
         
         // Unfilterable metadata - stored but not indexed (larger fields)
-        unfilterable: {
-          docId: docId,
-          agentId: docMeta?.agentId || 'default',
-          year: docMeta?.year || '',
-          version: docMeta?.version || '',
-          originalTextLength: chunks[i]?.length || 0,
-          fullText: chunks[i] || '' // Store full text in unfilterable section
-        }
+        // unfilterable: {
+        //   docId: docId,
+        //   agentId: docMeta?.agentId || 'default',
+        //   year: docMeta?.year || '',
+        //   version: docMeta?.version || '',
+        //   originalTextLength: chunks[i]?.length || 0,
+        //   fullText: chunks[i] || '' // Store full text in unfilterable section
+        // }
       }
     };
   });
