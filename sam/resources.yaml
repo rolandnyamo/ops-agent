@@ -363,8 +363,6 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /docs/view/{docId}
             Method: GET
-            Auth:
-              Authorizer: !If [ IsAuthEnabled, AdminCognitoAuth, AWS::NoValue ]
             
   AgentsFn:
     Type: AWS::Serverless::Function
