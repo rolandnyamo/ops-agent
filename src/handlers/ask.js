@@ -1,10 +1,38 @@
 const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { S3VectorsClient, QueryVectorsCommand } = require('@aws-sdk/client-s3vectors');
+const { DynamoDBClient, GetItemCommand } = require('@aws-sdk/client-dynamodb');
+const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { getOpenAIClient } = require('./helpers/openai-client');
+const { generateText } = require('./helpers/openai');
 
 const VECTOR_MODE = process.env.VECTOR_MODE || 's3vectors';
 const VECTOR_BUCKET = process.env.VECTOR_BUCKET;
 const VECTOR_INDEX = process.env.VECTOR_INDEX || 'docs';
+const SETTINGS_TABLE = process.env.SETTINGS_TABLE;
+
+const ddb = new DynamoDBClient({});
+
+async function getAgentSettings(agentId) {
+  try {
+    const res = await ddb.send(new GetItemCommand({
+      TableName: SETTINGS_TABLE,
+      Key: marshall({ pk: `agent#${agentId}` })
+    }));
+    
+    if (res.Item) {
+      return unmarshall(res.Item);
+    }
+  } catch (error) {
+    console.warn('Could not fetch agent settings:', error.message);
+  }
+  
+  // Return defaults if not found
+  return {
+    agentName: 'Agent',
+    confidenceThreshold: 0.45,
+    fallbackMessage: 'Sorry, I could not find this in the documentation.'
+  };
+}
 
 async function embedQuery(q){
   const openai = await getOpenAIClient();
@@ -53,6 +81,12 @@ exports.handler = async (event) => {
   const agentId = body?.agentId;
   if (!q) return { statusCode: 400, body: JSON.stringify({ message: 'q is required' }) };
 
+  // Get agent settings to use confidence threshold and fallback message
+  const agentSettings = agentId ? await getAgentSettings(agentId) : {
+    confidenceThreshold: 0.45,
+    fallbackMessage: 'I could not find this information in the documentation.'
+  };
+
   const vector = await embedQuery(q);
   let results;
   if (VECTOR_MODE === 's3vectors') {
@@ -63,11 +97,40 @@ exports.handler = async (event) => {
     results = await queryS3Jsonl(vector, 5, agentId);
   }
 
-  const grounded = results.length > 0;
-  const snippets = results.map(r => r.text).filter(Boolean).slice(0,3).join('\n\n');
   const confidence = results[0]?.score || 0;
-  const answer = grounded ? `Based on your sources:\n\n${snippets}` : 'I could not find this in the documentation.';
+  const grounded = results.length > 0 && confidence >= agentSettings.confidenceThreshold;
   const citations = results.slice(0,3).map(r => ({ docId: r.metadata?.docId, chunk: r.metadata?.chunkIdx, score: Number((r.score||0).toFixed(3)) }));
+
+  let answer;
+  if (grounded) {
+    const snippets = results.map(r => r.text).filter(Boolean).slice(0,3).join('\n\n');
+    
+    // Use the OpenAI helper to generate a comprehensive answer
+    const systemPrompt = `You are a helpful assistant that answers questions based on provided documentation. Use the context provided to give accurate, helpful responses. If the context doesn't fully answer the question, acknowledge what information is available and what might be missing.`;
+    const userPrompt = `Context from documentation:\n\n${snippets}\n\nQuestion: ${q}\n\nPlease provide a helpful answer based on the above context.`;
+    
+    try {
+      const response = await generateText({
+        model: 'gpt-3.5-turbo',
+        input: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        additionalParams: {
+          max_tokens: 500,
+          temperature: 0.1
+        }
+      });
+      
+      answer = response.success ? response.text : `Based on your sources:\n\n${snippets}`;
+    } catch (error) {
+      // Fallback to raw snippets if AI fails
+      answer = `Based on your sources:\n\n${snippets}`;
+    }
+  } else {
+    // Use agent-specific fallback message when confidence is too low or no results
+    answer = agentSettings.fallbackMessage;
+  }
 
   return { statusCode: 200, body: JSON.stringify({ answer, grounded, confidence: Number(confidence.toFixed(3)), citations }) };
 };

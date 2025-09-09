@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { useApp } from '../../../context/AppContext';
 import { AgentDetailsSkeleton } from '../../../components/Skeletons';
+import AgentChat from '../../../components/AgentChat';
 
 export default function AgentDetail(){
   const { query } = useRouter();
@@ -40,7 +41,7 @@ export default function AgentDetail(){
         </Link>
       </div>
       
-      <div className="grid cols-2">
+      <div className="grid cols-2" style={{ marginBottom: 24 }}>
         <div className="card">
           <h3 className="card-title">{agent?.settings?.agentName || agent?.name || 'Agent'}</h3>
           <div className="muted mini" style={{marginBottom:8}}>ID: {agentId}</div>
@@ -67,6 +68,9 @@ export default function AgentDetail(){
           <div className="muted mini" style={{marginTop:8}}>Add documents, review sources, and configure settings for this agent.</div>
         </div>
       </div>
+      
+      {/* Chat Component */}
+      <AgentChat agentId={agentId} />
     </Layout>
   );
 }
