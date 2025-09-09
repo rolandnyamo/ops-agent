@@ -101,6 +101,14 @@ Resources:
       LogoutURLs: ["http://localhost:3000"]
       SupportedIdentityProviders: [COGNITO]
 
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admin
+      Description: Administrators with full access to user management
+      UserPoolId: !Ref UserPool
+      Precedence: 10
+
   BotAuthFn:
     Type: AWS::Serverless::Function
     Properties:
@@ -462,6 +470,107 @@ Resources:
               Action:
                 - dynamodb:*
               Resource: "*"
+
+  UsersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-users"
+      CodeUri: ../src
+      Handler: handlers/users.handler
+      Events:
+        GetUsers:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users
+            Method: GET
+            Auth:
+              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
+        GetUser:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users/{userId}
+            Method: GET
+            Auth:
+              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
+        InviteUser:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users/invite
+            Method: POST
+            Auth:
+              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
+        ActivateUser:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users/{userId}/activate
+            Method: PUT
+            Auth:
+              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
+        DeactivateUser:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users/{userId}/deactivate
+            Method: PUT
+            Auth:
+              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
+        DeleteUser:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users/{userId}
+            Method: DELETE
+            Auth:
+              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
+        OptionsUsers:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users
+            Method: OPTIONS
+        OptionsUsersPath:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users/{userId}
+            Method: OPTIONS
+        OptionsUsersInvite:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users/invite
+            Method: OPTIONS
+        OptionsUsersActivate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users/{userId}/activate
+            Method: OPTIONS
+        OptionsUsersDeactivate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /users/{userId}/deactivate
+            Method: OPTIONS
+      Environment:
+        Variables:
+          COGNITO_USER_POOL_ID: !Ref UserPool
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+                - cognito-idp:AdminCreateUser
+                - cognito-idp:AdminDeleteUser
+                - cognito-idp:AdminEnableUser
+                - cognito-idp:AdminDisableUser
+                - cognito-idp:AdminGetUser
+                - cognito-idp:AdminListGroupsForUser
+              Resource: !GetAtt UserPool.Arn
 
 Outputs:
   ApiEndpoint:

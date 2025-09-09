@@ -351,3 +351,165 @@ kbd{
   .upload-zone .upload-icon{width: 40px; height: 40px}
 }
 
+/* Custom Amplify Authenticator Styles */
+[data-amplify-authenticator] {
+  --amplify-components-authenticator-router-background-color: transparent;
+  --amplify-components-authenticator-router-border: none;
+  --amplify-components-authenticator-router-box-shadow: none;
+  --amplify-components-fieldcontrol-border-color: #d1d5db;
+  --amplify-components-fieldcontrol-focus-border-color: #8b5cf6;
+}
+
+/* Full screen styling for login form only */
+[data-amplify-authenticator]:not([data-amplify-authenticated]) {
+  min-height: 100vh !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+  padding: 20px !important;
+}
+
+[data-amplify-authenticator]:not([data-amplify-authenticated]) [data-amplify-router] {
+  width: 100% !important;
+  max-width: 400px !important;
+  background: white !important;
+  border-radius: 12px !important;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1) !important;
+  overflow: hidden !important;
+  padding: 40px 30px !important;
+  margin: 0 auto !important;
+}
+
+[data-amplify-authenticator][data-amplify-authenticated] {
+  background: none !important;
+  min-height: auto !important;
+  display: block !important;
+  padding: 0 !important;
+}
+
+[data-amplify-authenticator] [data-amplify-router] {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+[data-amplify-authenticator] form {
+  padding: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+[data-amplify-authenticator] .amplify-field {
+  margin-bottom: 20px;
+}
+
+[data-amplify-authenticator] .amplify-field__label {
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+  display: block;
+  font-size: 14px;
+}
+
+[data-amplify-authenticator] .amplify-input,
+[data-amplify-authenticator] input[type="email"],
+[data-amplify-authenticator] input[type="password"] {
+  padding: 14px 16px !important;
+  border: 2px solid #e5e7eb !important;
+  border-radius: 8px !important;
+  font-size: 16px !important;
+  transition: all 0.2s ease !important;
+  width: 100% !important;
+  background: #f9fafb !important;
+  color: #374151 !important;
+}
+
+[data-amplify-authenticator] .amplify-input:focus,
+[data-amplify-authenticator] input[type="email"]:focus,
+[data-amplify-authenticator] input[type="password"]:focus {
+  outline: none !important;
+  border-color: #8b5cf6 !important;
+  background: white !important;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1) !important;
+}
+
+[data-amplify-authenticator] .amplify-input::placeholder,
+[data-amplify-authenticator] input::placeholder {
+  color: #9ca3af !important;
+  font-size: 15px !important;
+}
+
+[data-amplify-authenticator] .amplify-button[data-variation="primary"],
+[data-amplify-authenticator] button[type="submit"] {
+  background: linear-gradient(135deg, #8b5cf6, #6366f1) !important;
+  border: none !important;
+  padding: 14px 24px !important;
+  border-radius: 8px !important;
+  font-weight: 600 !important;
+  font-size: 16px !important;
+  transition: all 0.2s ease !important;
+  width: 100% !important;
+  margin-top: 12px !important;
+  color: white !important;
+  cursor: pointer !important;
+}
+
+[data-amplify-authenticator] .amplify-button[data-variation="primary"]:hover,
+[data-amplify-authenticator] button[type="submit"]:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 10px 25px rgba(139, 92, 246, 0.3) !important;
+  background: linear-gradient(135deg, #7c3aed, #5b21b6) !important;
+}
+
+[data-amplify-authenticator] .amplify-button[data-variation="primary"]:active,
+[data-amplify-authenticator] button[type="submit"]:active {
+  transform: translateY(0) !important;
+}
+
+[data-amplify-authenticator] .amplify-label {
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
+  display: block;
+  font-size: 14px;
+}
+
+[data-amplify-authenticator] [data-amplify-router-content] {
+  padding: 0 !important;
+}
+
+/* Hide any unwanted elements */
+[data-amplify-authenticator] .amplify-tabs,
+[data-amplify-authenticator] [role="tablist"] {
+  display: none !important;
+}
+
+[data-amplify-authenticator] .amplify-authenticator__header {
+  display: none !important;
+}
+
+/* Error styling */
+[data-amplify-authenticator] .amplify-alert,
+[data-amplify-authenticator] [data-amplify-alert] {
+  background: #fee2e2 !important;
+  border: 1px solid #fca5a5 !important;
+  color: #dc2626 !important;
+  padding: 12px !important;
+  border-radius: 8px !important;
+  margin-bottom: 16px !important;
+  font-size: 14px !important;
+}
+
+/* Form container styling */
+[data-amplify-authenticator] [data-amplify-container] {
+  padding: 0 !important;
+}
+
+/* Additional input styling for better appearance */
+[data-amplify-authenticator] .amplify-field-group__control {
+  margin-bottom: 0 !important;
+}
+

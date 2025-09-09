@@ -163,3 +163,68 @@ export async function deleteAgent(agentId: string){
   if (!res.ok) throw new Error(`delete agent ${res.status}`);
   return res.json() as Promise<{ success: boolean }>;
 }
+
+// User Management API
+export type User = {
+  userId: string;
+  email: string;
+  emailVerified: boolean;
+  status: string;
+  enabled: boolean;
+  created: string;
+  lastModified: string;
+  displayStatus: string;
+};
+
+export async function getUsers(): Promise<{ users: User[] }> {
+  const res = await fetch(`${cfg.apiBase}/users`, { 
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) } 
+  });
+  if (!res.ok) throw new Error(`GET /users ${res.status}`);
+  return res.json();
+}
+
+export async function getUser(userId: string): Promise<{ user: User }> {
+  const res = await fetch(`${cfg.apiBase}/users/${encodeURIComponent(userId)}`, { 
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) } 
+  });
+  if (!res.ok) throw new Error(`GET /users/${userId} ${res.status}`);
+  return res.json();
+}
+
+export async function inviteUser(email: string): Promise<{ message: string; user: User }> {
+  const res = await fetch(`${cfg.apiBase}/users/invite`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(`POST /users/invite ${res.status}`);
+  return res.json();
+}
+
+export async function activateUser(userId: string): Promise<{ message: string }> {
+  const res = await fetch(`${cfg.apiBase}/users/${encodeURIComponent(userId)}/activate`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+  });
+  if (!res.ok) throw new Error(`PUT /users/${userId}/activate ${res.status}`);
+  return res.json();
+}
+
+export async function deactivateUser(userId: string): Promise<{ message: string }> {
+  const res = await fetch(`${cfg.apiBase}/users/${encodeURIComponent(userId)}/deactivate`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+  });
+  if (!res.ok) throw new Error(`PUT /users/${userId}/deactivate ${res.status}`);
+  return res.json();
+}
+
+export async function deleteUser(userId: string): Promise<{ message: string }> {
+  const res = await fetch(`${cfg.apiBase}/users/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+  });
+  if (!res.ok) throw new Error(`DELETE /users/${userId} ${res.status}`);
+  return res.json();
+}

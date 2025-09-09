@@ -6,6 +6,7 @@ import { useAgent } from '../lib/agent';
 
 const tabs = [
   { href: '/', label: 'Agents' },
+  { href: '/users', label: 'Users' },
   { href: '/bot', label: 'Bot' },
 ];
 
