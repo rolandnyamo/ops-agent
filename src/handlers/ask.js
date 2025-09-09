@@ -248,7 +248,11 @@ exports.handler = async (event) => {
   const searchTime = Date.now() - searchStartTime;
   const confidence = results[0]?.score || 0;
   const grounded = results.length > 0 && confidence >= agentSettings.confidenceThreshold;
-  const citations = results.slice(0,3).map(r => ({ docId: r.metadata?.docId, chunk: r.metadata?.chunkIdx, score: Number((r.score||0).toFixed(3)) }));
+  const citations = results.slice(0,3).map(r => ({ 
+    docId: r.metadata?.title || r.metadata?.docId || 'Document', 
+    chunk: r.metadata?.chunkIdx, 
+    score: Number((r.score||0).toFixed(3)) 
+  }));
 
   let answer;
   let aiPrompt = null;
@@ -257,9 +261,25 @@ exports.handler = async (event) => {
   if (grounded) {
     const snippets = results.map(r => r.text).filter(Boolean).slice(0,3).join('\n\n');
     
-    // Use the OpenAI helper to generate a comprehensive answer
-    const systemPrompt = `You are a helpful assistant that answers questions based on provided documentation. Use the context provided to give accurate, helpful responses. If the context doesn't fully answer the question, acknowledge what information is available and what might be missing.`;
-    const userPrompt = `Context from documentation:\n\n${snippets}\n\nQuestion: ${q}\n\nPlease provide a helpful answer based on the above context.`;
+    // Use the OpenAI helper to generate a concise, well-formatted answer
+    const systemPrompt = `You are a helpful assistant that provides concise, well-formatted answers based on documentation. 
+
+Guidelines:
+- Keep answers brief and to the point
+- Use bullet points or lists when presenting multiple items
+- Start with the most important/direct information
+- Format numbers and prices clearly
+- If the context is incomplete, briefly mention what's missing
+
+Format your response to be easily scannable.`;
+
+    const userPrompt = `Context from documentation:
+
+${snippets}
+
+Question: ${q}
+
+Provide a concise, well-formatted answer based on the above context.`;
     
     aiPrompt = { systemPrompt, userPrompt };
     
