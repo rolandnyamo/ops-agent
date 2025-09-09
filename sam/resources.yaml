@@ -484,48 +484,36 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /users
             Method: GET
-            Auth:
-              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
         GetUser:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /users/{userId}
             Method: GET
-            Auth:
-              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
         InviteUser:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /users/invite
             Method: POST
-            Auth:
-              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
         ActivateUser:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /users/{userId}/activate
             Method: PUT
-            Auth:
-              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
         DeactivateUser:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /users/{userId}/deactivate
             Method: PUT
-            Auth:
-              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
         DeleteUser:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /users/{userId}
             Method: DELETE
-            Auth:
-              Authorizer: !If [ IsAuthEnabled, JWTAuthorizer, 'NONE' ]
         OptionsUsers:
           Type: HttpApi
           Properties:
@@ -580,5 +568,3 @@ Outputs:
   UserPoolClientId:
     Value: !Ref UserPoolClient
 
-Conditions:
-  IsAuthEnabled: !Equals [ !Ref EnableAuth, 'true' ]
