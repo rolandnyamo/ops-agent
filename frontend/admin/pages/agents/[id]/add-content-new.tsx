@@ -1,5 +1,4 @@
 import Layout from '../../../components/Layout';
-import SuccessModal from '../../../components/SuccessModal';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createUploadUrl, ingestDoc, inferDoc, getSettings } from '../../../lib/api';
 import { useRouter } from 'next/router';
@@ -18,9 +17,6 @@ export default function AddContent(){
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string|undefined>();
   const [dragOver, setDragOver] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [isInferring, setIsInferring] = useState(false);
-  const [hasInferred, setHasInferred] = useState(false);
 
   useEffect(()=>{ if (!agentId) return; (async()=>{ try{ const s=await getSettings(agentId); setCategories(((s as any).categories)||[]);}catch{} })(); },[agentId]);
 
@@ -53,53 +49,8 @@ export default function AddContent(){
     }
   }, []);
 
-  // Auto-infer details when file changes
-  useEffect(() => {
-    if (file && !hasInferred && categories.length >= 0) {
-      autoInferDetails();
-    }
-  }, [file, hasInferred, categories]);
-
-  const autoInferDetails = async () => {
-    if (!file || mode !== 'upload') return;
-    
-    setIsInferring(true);
-    setError(undefined);
-    
-    try {
-      const sample = await file.slice(0, 4000).text();
-      const inf = await inferDoc(file.name, sample, categories);
-      setForm({
-        title: inf.title || file.name,
-        category: inf.category || (categories[0] || ''),
-        audience: inf.audience || 'All',
-        year: String(inf.year || new Date().getFullYear()),
-        version: inf.version || 'v1',
-        description: inf.description || ''
-      });
-      setHasInferred(true);
-    } catch {
-      // Silently fail auto-inference, user can manually infer
-      setForm(prev => ({ ...prev, title: file.name }));
-    } finally {
-      setIsInferring(false);
-    }
-  };
-
-  const handleFileChange = (selectedFile: File | undefined) => {
-    setFile(selectedFile);
-    setHasInferred(false);
-    if (!selectedFile) {
-      setForm({ title:'', description:'', category:'', audience:'All', year:String(new Date().getFullYear()), version:'v1' });
-    }
-  };
-
   async function onInfer(){
-    if (isInferring) return;
-    
     setError(undefined);
-    setIsInferring(true);
-    
     try{
       if (mode==='upload' && file){
         const sample = await file.slice(0, 4000).text();
@@ -112,13 +63,8 @@ export default function AddContent(){
           version: inf.version || 'v1',
           description: inf.description || ''
         });
-        setHasInferred(true);
       }
-    }catch{ 
-      setError('Could not infer details'); 
-    } finally {
-      setIsInferring(false);
-    }
+    }catch{ setError('Could not infer details'); }
   }
 
   async function onSubmit(){
@@ -135,31 +81,13 @@ export default function AddContent(){
         if (!url) throw new Error('URL required');
         await ingestDoc({ docId: cryptoRandom(12), title: form.title, description: form.description, category: form.category, audience: form.audience, year: form.year, version: form.version, url }, agentId);
       }
-      setShowSuccess(true);
+      await push(`/agents/${agentId}/sources`);
     }catch(e:any){ setError(e.message || 'Submit failed'); }
     finally{ setBusy(false); }
   }
 
   return (
     <Layout>
-      {showSuccess && (
-        <SuccessModal
-          title="Source added"
-          message="Your document is now part of the agent's knowledge base."
-          onClose={() => setShowSuccess(false)}
-          onAddAnother={() => {
-            setShowSuccess(false);
-            setStep(1);
-            setFile(undefined);
-            setUrl('');
-            setHasInferred(false);
-            setIsInferring(false);
-            setForm({ title:'', description:'', category:'', audience:'All', year:String(new Date().getFullYear()), version:'v1' });
-          }}
-          onViewAll={() => push(`/agents/${agentId}/sources`)}
-        />
-      )}
-      
       <div className="card">
         <h3 className="card-title">Add Content</h3>
         <div className="row" style={{gap:8, marginBottom:24}}>
@@ -174,11 +102,8 @@ export default function AddContent(){
         )}
         
         {step===1 && (
-          <div className="grid" style={{
-            gridTemplateColumns: (isInferring || (file && (form.title || form.category || form.description))) ? '1fr 1fr' : '1fr',
-            gap: 32
-          }}>
-            <div style={{display: 'flex', flexDirection: 'column', height: '100%'}}>
+          <div className="grid cols-2" style={{gap: 32}}>
+            <div>
               <div className="row" style={{gap:12, marginBottom:24}}>
                 <button className={`btn ${mode==='upload'?'':'ghost'}`} onClick={()=>setMode('upload')}>
                   Upload File
@@ -196,7 +121,6 @@ export default function AddContent(){
                   onDragEnter={handleDragEnter}
                   onDragLeave={handleDragLeave}
                   onClick={() => document.getElementById('file-input')?.click()}
-                  style={{marginBottom: 24}}
                 >
                   <div className="upload-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -217,7 +141,7 @@ export default function AddContent(){
                   <input 
                     id="file-input"
                     type="file" 
-                    onChange={e=>handleFileChange(e.target.files?.[0]||undefined)} 
+                    onChange={e=>setFile(e.target.files?.[0]||undefined)} 
                     style={{display: 'none'}}
                     accept=".pdf,.docx,.html,.md,.txt,.json,.csv"
                   />
@@ -229,7 +153,7 @@ export default function AddContent(){
                   )}
                 </div>
               ) : (
-                <div style={{marginBottom: 24}}>
+                <div>
                   <input 
                     className="input" 
                     placeholder="https://example.com/handbook.pdf" 
@@ -242,85 +166,31 @@ export default function AddContent(){
                   </div>
                 </div>
               )}
-
-              {/* Buttons at the bottom */}
-              <div style={{marginTop: 'auto'}}>
-                <div className="row" style={{gap: 12}}>
-                  <button 
-                    className="btn ghost" 
-                    onClick={onInfer} 
-                    disabled={mode!=='upload' || !file || isInferring}
-                    style={{flex: 1}}
-                  >
-                    {isInferring ? 'Auto-filling...' : 'Re-analyze'}
-                  </button>
-                  <button 
-                    className="btn" 
-                    onClick={()=>setStep(2)} 
-                    disabled={mode==='upload' && !file}
-                    style={{flex: 1}}
-                  >
-                    Next Step →
-                  </button>
-                </div>
-              </div>
             </div>
             
-            {/* Show detected details as a second column when available */}
-            {(isInferring || (file && (form.title || form.category || form.description))) && (
-              <div style={{
-                padding: 24, 
-                background: 'rgba(255,255,255,.03)', 
-                borderRadius: 'var(--radius)', 
-                border: '1px solid var(--line)',
-                height: 'fit-content'
-              }}>
-                <div style={{marginBottom: 16}}>
-                  <h4 style={{margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--text)'}}>
-                    {isInferring ? '🔍 Auto-filling details...' : '📋 Detected Details'}
-                  </h4>
-                  {isInferring && (
-                    <div className="muted mini" style={{marginTop: 4}}>
-                      Analyzing file content...
-                    </div>
-                  )}
-                </div>
-                
-                {isInferring ? (
-                  <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
-                    <div className="loading-shimmer" style={{height: 20, borderRadius: 4}} />
-                    <div className="loading-shimmer" style={{height: 20, borderRadius: 4, width: '60%'}} />
-                    <div className="loading-shimmer" style={{height: 40, borderRadius: 4}} />
-                  </div>
-                ) : (
-                  <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
-                    {form.title && (
-                      <div>
-                        <div className="muted mini" style={{marginBottom: 4}}>Title</div>
-                        <div style={{fontSize: 14, fontWeight: 500}}>{form.title}</div>
-                      </div>
-                    )}
-                    {form.category && (
-                      <div>
-                        <div className="muted mini" style={{marginBottom: 4}}>Category</div>
-                        <div style={{fontSize: 14}}>{form.category}</div>
-                      </div>
-                    )}
-                    {form.description && (
-                      <div>
-                        <div className="muted mini" style={{marginBottom: 4}}>Description</div>
-                        <div style={{fontSize: 14, lineHeight: 1.4}} className="muted">{form.description}</div>
-                      </div>
-                    )}
-                    <div style={{marginTop: 8, padding: 12, background: 'rgba(34,197,94,.05)', borderRadius: 6, border: '1px solid rgba(34,197,94,.1)'}}>
-                      <div className="muted mini" style={{color: 'rgba(34,197,94,.8)'}}>
-                        ✓ Ready for review - you can edit these details in the next step
-                      </div>
-                    </div>
-                  </div>
-                )}
+            <div style={{padding: 24, background: 'rgba(255,255,255,.02)', borderRadius: 'var(--radius)', border: '1px solid var(--line)'}}>
+              <div className="muted" style={{marginBottom: 16, fontSize: 14}}>
+                💡 <strong>Pro tip:</strong> After selecting a file, click "Auto-fill" to automatically detect title, category, and other metadata.
               </div>
-            )}
+              <div className="row" style={{marginTop:20, gap: 12}}>
+                <button 
+                  className="btn ghost" 
+                  onClick={onInfer} 
+                  disabled={mode!=='upload' || !file}
+                  style={{flex: 1}}
+                >
+                  Auto-fill Details
+                </button>
+                <button 
+                  className="btn" 
+                  onClick={()=>setStep(2)} 
+                  disabled={mode==='upload' && !file}
+                  style={{flex: 1}}
+                >
+                  Next Step →
+                </button>
+              </div>
+            </div>
           </div>
         )}
         
