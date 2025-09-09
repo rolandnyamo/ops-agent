@@ -42,7 +42,7 @@ Globals:
         RAW_BUCKET: 'ops-agent-prod-raw-326445141506-us-east-1'  # This will be overridden by the actual import value in the function definition
         VECTOR_BUCKET: 'ops-embeddings'  # This will be overridden by the actual import value in the function definition
         VECTOR_INDEX: 'docs'  # This will be overridden by the actual import value in the function definition
-        VECTOR_MODE: s3vectors
+        # VECTOR_MODE: s3vectors
 
 Resources:
   HttpApi:
