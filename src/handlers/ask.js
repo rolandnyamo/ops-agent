@@ -16,11 +16,12 @@ async function getAgentSettings(agentId) {
   try {
     const res = await ddb.send(new GetItemCommand({
       TableName: SETTINGS_TABLE,
-      Key: marshall({ pk: `agent#${agentId}` })
+      Key: marshall({ PK: `AGENT#${agentId}`, SK: 'SETTINGS#V1' })
     }));
     
     if (res.Item) {
-      return unmarshall(res.Item);
+      const item = unmarshall(res.Item);
+      return item.data || item; // data might be nested
     }
   } catch (error) {
     console.warn('Could not fetch agent settings:', error.message);
@@ -49,11 +50,16 @@ function cosine(a, b){
 
 async function queryS3Vectors(vector, topK=5, filter){
   const client = new S3VectorsClient({});
-  const params = { bucket: VECTOR_BUCKET, index: VECTOR_INDEX, vector, topK };
+  const params = { 
+    vectorBucketName: VECTOR_BUCKET, 
+    indexName: VECTOR_INDEX, 
+    queryVector: { float32: vector }, 
+    topK 
+  };
   if (filter) params.filter = filter;
   const res = await client.send(new QueryVectorsCommand(params));
-  const items = res?.results || res?.vectors || [];
-  return items.map((r) => ({ score: r.score ?? r.distance ?? 0, metadata: r.metadata, text: r.text }));
+  const items = res?.vectors || [];
+  return items.map((r) => ({ score: r.distance ?? 0, metadata: r.metadata, text: r.metadata?.text }));
 }
 
 async function queryS3Jsonl(vector, topK=5, agentId){
@@ -88,6 +94,13 @@ exports.handler = async (event) => {
   };
 
   const vector = await embedQuery(q);
+  console.log('Generated vector length:', vector?.length);
+  console.log('Vector sample:', vector?.slice(0, 5));
+  
+  if (!vector) {
+    return { statusCode: 500, body: JSON.stringify({ message: 'Failed to generate embedding vector' }) };
+  }
+  
   let results;
   if (VECTOR_MODE === 's3vectors') {
     let f = filter;
