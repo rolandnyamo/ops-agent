@@ -10,7 +10,7 @@ const {
 } = require('@aws-sdk/client-cognito-identity-provider');
 
 const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION });
-const USER_POOL_ID = process.env.COGNITO_USER_POOL_ID;
+const USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || 'us-east-1_plBqP2xqJ';
 
 // Helper function to check if user is admin
 async function isUserAdmin(username, tokenPayload = null) {
@@ -124,9 +124,16 @@ function corsHeaders() {
 }
 
 exports.handler = async (event) => {
+  console.log('Event object:', JSON.stringify(event, null, 2));
+  
   const method = event.httpMethod || event.requestContext?.http?.method || 'GET';
   const pathParameters = event.pathParameters || {};
   const body = parseBody(event);
+  
+  console.log('Method:', method);
+  console.log('Path:', event.path);
+  console.log('Resource:', event.resource);
+  console.log('Path parameters:', pathParameters);
   
   // Handle CORS preflight
   if (method === 'OPTIONS') {
