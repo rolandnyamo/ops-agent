@@ -168,7 +168,7 @@ exports.handler = async (event) => {
 
   const vector = await embedQuery(q);
   console.log('Generated vector length:', vector?.length);
-  console.log('Vector sample:', vector?.slice(0, 5));
+  // console.log('Vector sample:', vector?.slice(0, 5));
   
   if (!vector) {
     return { statusCode: 500, body: JSON.stringify({ message: 'Failed to generate embedding vector' }) };
@@ -301,7 +301,7 @@ Provide a concise, well-formatted answer based on the above context.`;
           { role: 'user', content: userPrompt }
         ],
         additionalParams: {
-          maxTokens: 500,
+          max_output_tokens: 500,
           temperature: 0.1
         }
       });
