@@ -3,21 +3,49 @@ import Layout from '../../../../../components/Layout';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { getBot, Bot } from '../../../../../lib/api';
-import { cfg } from '../../../../../lib/config';
+
+// For bot testing, we need to use the actual deployed API endpoint
+// not the local development server, because bot auth only works on deployed API
+const getBotTestApiBase = () => {
+  // If we're in production or have a deployed API URL, use it
+  // Otherwise, we'll show a message that bot testing requires deployment
+  const deployedApiBase = process.env.NEXT_PUBLIC_DEPLOYED_API_BASE;
+  if (deployedApiBase) {
+    return deployedApiBase;
+  }
+  
+  // For local development, we can't test bot auth properly
+  // because the local SAM server doesn't run the bot authorizer
+  return null;
+};
 
 // Bot Testing Component
 function BotTester({ botApiKey }: { botApiKey: string }) {
   const [testMessage, setTestMessage] = useState('');
   const [testResponse, setTestResponse] = useState('');
   const [testing, setTesting] = useState(false);
-  const [testHistory, setTestHistory] = useState<Array<{question: string, answer: string, timestamp: string}>>([]);
+  const [testHistory, setTestHistory] = useState<Array<{
+    question: string, 
+    answer: string, 
+    timestamp: string,
+    confidence?: number,
+    grounded?: boolean,
+    resultsFound?: number
+  }>>([]);
+
+  const botTestApiBase = getBotTestApiBase();
 
   async function testBot() {
     if (!testMessage.trim()) return;
     
+    if (!botTestApiBase) {
+      setTestResponse('Bot testing requires a deployed API endpoint. Please deploy your application first or set NEXT_PUBLIC_DEPLOYED_API_BASE environment variable.');
+      return;
+    }
+    
     setTesting(true);
     try {
-      const response = await fetch(`${cfg.apiBase}/ask`, {
+      const response = await fetch(`${botTestApiBase}/ask`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -33,13 +61,16 @@ function BotTester({ botApiKey }: { botApiKey: string }) {
       }
 
       const data = await response.json();
-      const answer = data.answer || data.message || 'No response received';
+      const answer = data.answer || 'No response received';
       
       setTestResponse(answer);
       setTestHistory(prev => [{
         question: testMessage.trim(),
         answer,
-        timestamp: new Date().toLocaleTimeString()
+        timestamp: new Date().toLocaleTimeString(),
+        confidence: data.confidence || 0,
+        grounded: data.grounded || false,
+        resultsFound: data.resultsFound || 0
       }, ...prev]);
       
       setTestMessage('');
@@ -55,6 +86,24 @@ function BotTester({ botApiKey }: { botApiKey: string }) {
       e.preventDefault();
       testBot();
     }
+  }
+
+  if (!botTestApiBase) {
+    return (
+      <div style={{ 
+        background: '#fef3c7', 
+        border: '1px solid #f59e0b', 
+        borderRadius: '6px', 
+        padding: '16px' 
+      }}>
+        <p style={{ margin: 0, fontSize: '14px', color: '#92400e' }}>
+          <strong>⚠️ Bot testing unavailable</strong><br />
+          Bot testing requires the deployed API endpoint because it uses bot authentication. 
+          The local development server doesn't support bot auth. Please deploy your application 
+          or set the <code>NEXT_PUBLIC_DEPLOYED_API_BASE</code> environment variable to test bot functionality.
+        </p>
+      </div>
+    );
   }
 
   return (
@@ -90,9 +139,23 @@ function BotTester({ botApiKey }: { botApiKey: string }) {
               borderRadius: '4px',
               fontSize: '14px',
               cursor: testing || !testMessage.trim() ? 'not-allowed' : 'pointer',
-              minWidth: '80px'
+              minWidth: '80px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px'
             }}
           >
+            {testing && (
+              <div style={{
+                width: '12px',
+                height: '12px',
+                border: '2px solid transparent',
+                borderTop: '2px solid white',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite'
+              }} />
+            )}
             {testing ? 'Testing...' : 'Test'}
           </button>
         </div>
@@ -122,6 +185,13 @@ function BotTester({ botApiKey }: { botApiKey: string }) {
                   <div style={{ fontSize: '14px', color: '#374151', fontWeight: 'bold' }}>
                     {test.question}
                   </div>
+                  {(test.confidence !== undefined || test.resultsFound !== undefined) && (
+                    <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                      Confidence: {((test.confidence || 0) * 100).toFixed(1)}% | 
+                      Results: {test.resultsFound || 0} | 
+                      Grounded: {test.grounded ? '✅' : '❌'}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>
@@ -230,6 +300,12 @@ export default function BotInstructions() {
 
   return (
     <Layout>
+      <style jsx>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
       <div style={{ marginBottom: 24 }}>
         <Link 
           href={`/agents/${agentId}/bots`} 
@@ -424,7 +500,7 @@ export default function BotInstructions() {
 
         {/* Bot Testing */}
         <div style={{ marginBottom: 32 }}>
-          <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>🧪 Test Your Bot</h3>
+          <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>🧪 Test Bot Authentication & API</h3>
           <div style={{ 
             background: '#f0f9ff',
             border: '1px solid #0ea5e9',
@@ -432,7 +508,8 @@ export default function BotInstructions() {
             padding: '16px'
           }}>
             <p style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#0369a1' }}>
-              Test your bot directly from the admin panel to ensure it's working correctly before deploying to your website.
+              Test your bot's API key authentication and response quality using the actual deployed API endpoint.
+              This verifies that the bot authentication is working correctly and that responses are accurate.
             </p>
             <BotTester botApiKey={bot.apiKey} />
           </div>

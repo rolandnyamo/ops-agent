@@ -158,7 +158,7 @@ exports.handler = async (event) => {
       statusCode: 200,
       headers: {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Bot-API-Key',
+        'Access-Control-Allow-Headers': 'Content-Type, x-bot-api-key, X-Bot-API-Key',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Content-Type': 'application/json'
       },
@@ -421,7 +421,7 @@ Provide a concise, well-formatted answer based on the above context.`;
   // Set response headers for CORS, especially important for bot requests
   const responseHeaders = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Bot-API-Key',
+    'Access-Control-Allow-Headers': 'Content-Type, x-bot-api-key, X-Bot-API-Key',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Content-Type': 'application/json'
   };
