@@ -65,6 +65,7 @@ Resources:
             IdentitySource: "$request.header.Authorization"
           BotLambdaAuth:
             FunctionArn: !GetAtt BotAuthFn.Arn
+            FunctionInvokeRole: !GetAtt BotAuthApiInvokeRole.Arn
             AuthorizerPayloadFormatVersion: 2.0
             EnableSimpleResponses: true
             Identity:
@@ -117,9 +118,6 @@ Resources:
       FunctionName: !Sub "${ProjectName}-${Stage}-bot-auth"
       CodeUri: ../src
       Handler: handlers/auth/botAuth.handler
-      Environment:
-        Variables:
-          var1: value1
       Policies:
         - Statement:
             - Effect: Allow
@@ -127,13 +125,26 @@ Resources:
                 - dynamodb:*
               Resource: "*"
 
-  BotAuthPermission:
-    Type: AWS::Lambda::Permission
+  BotAuthApiInvokeRole:
+    Type: AWS::IAM::Role
     Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref BotAuthFn
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - "apigateway.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: LambdaAuthorizerInvokePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource: !Ref BotAuthFn
 
   AskFn:
     Type: AWS::Serverless::Function
