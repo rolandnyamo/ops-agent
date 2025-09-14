@@ -173,19 +173,42 @@ exports.handler = async (event) => {
   let agentId = body?.agentId;
   const debug = body?.debug === true;
   
-  // Check if this is a bot request (authorizer will have already validated the API key)
+  // Check authentication context from the authorizer
   const authorizerContext = event.requestContext?.authorizer?.lambda;
   let botInfo = null;
+  let authType = null;
   
-  if (authorizerContext && authorizerContext.agentId) {
-    // This is an authenticated bot request
-    agentId = authorizerContext.agentId;
-    botInfo = {
-      botId: authorizerContext.botId,
-      siteUrl: authorizerContext.siteUrl,
-      platform: authorizerContext.platform
-    };
-    console.log(`Bot request: ${botInfo.botId} for agent: ${agentId}`);
+  if (authorizerContext) {
+    authType = authorizerContext.authType;
+    
+    if (authType === 'bot' && authorizerContext.agentId) {
+      // This is an authenticated bot request
+      agentId = authorizerContext.agentId;
+      botInfo = {
+        botId: authorizerContext.botId,
+        siteUrl: authorizerContext.siteUrl,
+        platform: authorizerContext.platform
+      };
+      console.log(`Bot request: ${botInfo.botId} for agent: ${agentId}`);
+    } else if (authType === 'admin') {
+      // This is an admin testing the bot functionality
+      // agentId should be provided in the request body
+      if (!agentId) {
+        return {
+          statusCode: 400,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ 
+            message: 'agentId is required when testing as admin',
+            authType: 'admin',
+            userId: authorizerContext.userId
+          })
+        };
+      }
+      console.log(`Admin testing bot functionality: ${authorizerContext.email} for agent: ${agentId}`);
+    }
   }
   
   if (!q) return { statusCode: 400, body: JSON.stringify({ message: 'q is required' }) };

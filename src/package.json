@@ -9,6 +9,7 @@
     "@aws-sdk/client-ssm": "^3.649.0",
     "@aws-sdk/s3-request-presigner": "^3.649.0",
     "@aws-sdk/util-dynamodb": "^3.649.0",
+    "aws-jwt-verify": "^5.1.0",
     "mammoth": "^1.6.0",
     "openai": "^4.0.0",
     "pdf-parse": "^1.1.1",

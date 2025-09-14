@@ -52,7 +52,7 @@ Resources:
       CorsConfiguration:
         AllowOrigins: ['*']
         AllowMethods: ['GET','POST', 'PUT', 'DELETE', 'OPTIONS']
-        AllowHeaders: ['authorization','content-type','x-bot-signature','x-bot-timestamp']
+        AllowHeaders: ['authorization','content-type','x-bot-signature','x-bot-timestamp','x-bot-api-key']
       Auth:
         Authorizers:
           AdminCognitoAuth:
@@ -68,6 +68,7 @@ Resources:
             Identity:
               Headers:
                 - X-Bot-API-Key
+                - Authorization
 
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -114,6 +115,11 @@ Resources:
       FunctionName: !Sub "${ProjectName}-${Stage}-bot-auth"
       CodeUri: ../src
       Handler: handlers/auth/botAuth.handler
+      Environment:
+        Variables:
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          COGNITO_USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          AWS_REGION: !Ref AWS::Region
       Policies:
         - Statement:
             - Effect: Allow
@@ -142,8 +148,6 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /qa
             Method: POST
-            Auth:
-              Authorizer: BotLambdaAuth
         PostAsk:
           Type: HttpApi
           Properties:

@@ -3,24 +3,23 @@ import Layout from '../../../../../components/Layout';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { getBot, Bot } from '../../../../../lib/api';
+import { cfg } from '../../../../../lib/config';
+import { fetchAuthSession } from 'aws-amplify/auth';
 
-// For bot testing, we need to use the actual deployed API endpoint
-// not the local development server, because bot auth only works on deployed API
-const getBotTestApiBase = () => {
-  // If we're in production or have a deployed API URL, use it
-  // Otherwise, we'll show a message that bot testing requires deployment
-  const deployedApiBase = process.env.NEXT_PUBLIC_DEPLOYED_API_BASE;
-  if (deployedApiBase) {
-    return deployedApiBase;
+async function authHeader() {
+  try {
+    const { tokens } = await fetchAuthSession();
+    const id = tokens?.idToken?.toString();
+    return id ? { Authorization: `Bearer ${id}` } : {};
+  } catch {
+    return {};
   }
-  
-  // For local development, we can't test bot auth properly
-  // because the local SAM server doesn't run the bot authorizer
-  return null;
-};
+}
 
 // Bot Testing Component
 function BotTester({ botApiKey }: { botApiKey: string }) {
+  const { query } = useRouter();
+  const agentId = String(query.id || '');
   const [testMessage, setTestMessage] = useState('');
   const [testResponse, setTestResponse] = useState('');
   const [testing, setTesting] = useState(false);
@@ -33,26 +32,21 @@ function BotTester({ botApiKey }: { botApiKey: string }) {
     resultsFound?: number
   }>>([]);
 
-  const botTestApiBase = getBotTestApiBase();
-
   async function testBot() {
     if (!testMessage.trim()) return;
     
-    if (!botTestApiBase) {
-      setTestResponse('Bot testing requires a deployed API endpoint. Please deploy your application first or set NEXT_PUBLIC_DEPLOYED_API_BASE environment variable.');
-      return;
-    }
-    
     setTesting(true);
     try {
-      const response = await fetch(`${botTestApiBase}/ask`, {
+      // Test using admin authentication (admin testing bot functionality)
+      const response = await fetch(`${cfg.apiBase}/ask`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Bot-API-Key': botApiKey
+          ...(await authHeader()) // Admin bearer token
         },
         body: JSON.stringify({
-          q: testMessage.trim()
+          q: testMessage.trim(),
+          agentId: agentId // Required when testing as admin
         })
       });
 
@@ -86,24 +80,6 @@ function BotTester({ botApiKey }: { botApiKey: string }) {
       e.preventDefault();
       testBot();
     }
-  }
-
-  if (!botTestApiBase) {
-    return (
-      <div style={{ 
-        background: '#fef3c7', 
-        border: '1px solid #f59e0b', 
-        borderRadius: '6px', 
-        padding: '16px' 
-      }}>
-        <p style={{ margin: 0, fontSize: '14px', color: '#92400e' }}>
-          <strong>⚠️ Bot testing unavailable</strong><br />
-          Bot testing requires the deployed API endpoint because it uses bot authentication. 
-          The local development server doesn't support bot auth. Please deploy your application 
-          or set the <code>NEXT_PUBLIC_DEPLOYED_API_BASE</code> environment variable to test bot functionality.
-        </p>
-      </div>
-    );
   }
 
   return (
@@ -500,7 +476,7 @@ export default function BotInstructions() {
 
         {/* Bot Testing */}
         <div style={{ marginBottom: 32 }}>
-          <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>🧪 Test Bot Authentication & API</h3>
+          <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>🧪 Test Bot Functionality</h3>
           <div style={{ 
             background: '#f0f9ff',
             border: '1px solid #0ea5e9',
@@ -508,8 +484,8 @@ export default function BotInstructions() {
             padding: '16px'
           }}>
             <p style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#0369a1' }}>
-              Test your bot's API key authentication and response quality using the actual deployed API endpoint.
-              This verifies that the bot authentication is working correctly and that responses are accurate.
+              Test your bot's functionality using admin authentication. This tests the same logic that external bots will use,
+              but authenticates with your admin credentials instead of the bot API key.
             </p>
             <BotTester botApiKey={bot.apiKey} />
           </div>
