@@ -144,7 +144,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - "lambda:InvokeFunction"
-                Resource: !GetAtt BotAuthFn.Arn
+                Resource: "*"
 
   AskFn:
     Type: AWS::Serverless::Function
