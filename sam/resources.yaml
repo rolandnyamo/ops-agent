@@ -37,6 +37,8 @@ Globals:
     Tracing: Active
     Environment:
       Variables:
+        COGNITO_USER_POOL_ID: !Ref UserPool
+        COGNITO_USER_POOL_CLIENT_ID: !Ref UserPoolClient
         DOCS_TABLE: 'ops-agent-prod-docs'  # This will be overridden by the actual import value in the function definition
         SETTINGS_TABLE: 'ops-agent-prod-settings'  # This will be overridden by the actual import value in the function definition
         RAW_BUCKET: 'ops-agent-prod-raw-326445141506-us-east-1'  # This will be overridden by the actual import value in the function definition
@@ -117,9 +119,7 @@ Resources:
       Handler: handlers/auth/botAuth.handler
       Environment:
         Variables:
-          COGNITO_USER_POOL_ID: !Ref UserPool
-          COGNITO_USER_POOL_CLIENT_ID: !Ref UserPoolClient
-          AWS_REGION: !Ref AWS::Region
+          var1: value1
       Policies:
         - Statement:
             - Effect: Allow
