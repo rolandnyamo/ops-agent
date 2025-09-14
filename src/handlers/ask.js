@@ -152,12 +152,42 @@ async function debugS3BucketContents() {
 }
 
 exports.handler = async (event) => {
+  // Handle CORS preflight requests
+  if (event.requestContext?.http?.method === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Bot-API-Key',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Content-Type': 'application/json'
+      },
+      body: ''
+    };
+  }
+
   const startTime = Date.now();
   const body = event?.body && typeof event.body === 'string' ? JSON.parse(event.body) : event?.body || {};
   const q = body?.q;
   const filter = body?.filter;
-  const agentId = body?.agentId;
+  let agentId = body?.agentId;
   const debug = body?.debug === true;
+  
+  // Check if this is a bot request (authorizer will have already validated the API key)
+  const authorizerContext = event.requestContext?.authorizer?.lambda;
+  let botInfo = null;
+  
+  if (authorizerContext && authorizerContext.agentId) {
+    // This is an authenticated bot request
+    agentId = authorizerContext.agentId;
+    botInfo = {
+      botId: authorizerContext.botId,
+      siteUrl: authorizerContext.siteUrl,
+      platform: authorizerContext.platform
+    };
+    console.log(`Bot request: ${botInfo.botId} for agent: ${agentId}`);
+  }
+  
   if (!q) return { statusCode: 400, body: JSON.stringify({ message: 'q is required' }) };
 
   // Get agent settings to use confidence threshold and fallback message
@@ -388,5 +418,28 @@ Provide a concise, well-formatted answer based on the above context.`;
     }
   }
 
-  return { statusCode: 200, body: JSON.stringify(response) };
+  // Set response headers for CORS, especially important for bot requests
+  const responseHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Bot-API-Key',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Content-Type': 'application/json'
+  };
+  
+  // If this is a bot request, add specific CORS for the bot's domain
+  if (botInfo && botInfo.siteUrl) {
+    try {
+      const siteUrl = new URL(botInfo.siteUrl);
+      responseHeaders['Access-Control-Allow-Origin'] = `${siteUrl.protocol}//${siteUrl.host}`;
+    } catch (e) {
+      // Fall back to wildcard if URL parsing fails
+      console.warn('Could not parse bot site URL for CORS:', botInfo.siteUrl);
+    }
+  }
+
+  return { 
+    statusCode: 200, 
+    headers: responseHeaders,
+    body: JSON.stringify(response) 
+  };
 };

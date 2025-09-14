@@ -79,9 +79,10 @@ export default function AgentDetail(){
           <div className="row" style={{flexWrap:'wrap', gap:10}}>
             <Link href={`/agents/${agentId}/add-content`} className="btn">Add Content</Link>
             <Link href={`/agents/${agentId}/sources`} className="btn ghost">My Sources</Link>
+            <Link href={`/agents/${agentId}/bots`} className="btn ghost">Bots</Link>
             <Link href={`/agents/${agentId}/setup`} className="btn ghost">Setup</Link>
           </div>
-          <div className="muted mini" style={{marginTop:8}}>Add documents, review sources, and configure settings for this agent.</div>
+          <div className="muted mini" style={{marginTop:8}}>Add documents, manage bots, review sources, and configure settings for this agent.</div>
           
           <div style={{marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--line)'}}>
             <button 

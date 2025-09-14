@@ -67,8 +67,7 @@ Resources:
             EnableSimpleResponses: true
             Identity:
               Headers:
-                - X-Bot-Signature
-                - X-Bot-Timestamp
+                - X-Bot-API-Key
 
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -115,9 +114,12 @@ Resources:
       FunctionName: !Sub "${ProjectName}-${Stage}-bot-auth"
       CodeUri: ../src
       Handler: handlers/auth/botAuth.handler
-      Environment:
-        Variables:
-          BOT_SECRET: !Ref BotApiSecret
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource: "*"
 
   BotAuthPermission:
     Type: AWS::Lambda::Permission
@@ -140,6 +142,22 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /qa
             Method: POST
+            Auth:
+              Authorizer: BotLambdaAuth
+        PostAsk:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /ask
+            Method: POST
+            Auth:
+              Authorizer: BotLambdaAuth
+        OptionsAsk:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /ask
+            Method: OPTIONS
       Environment:
         Variables:
           var1: value1
@@ -417,6 +435,60 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /agents/{agentId}
             Method: DELETE
+            
+  BotsFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-bots"
+      CodeUri: ../src
+      Handler: handlers/bots.handler
+      Environment:
+        Variables:
+          var1: value1
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource: "*"
+      Events:
+        CreateBot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /agents/{agentId}/bots
+            Method: POST
+        ListBots:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /agents/{agentId}/bots
+            Method: GET
+        GetAllBots:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /bots
+            Method: GET
+        GetBot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /agents/{agentId}/bots/{botId}
+            Method: GET
+        UpdateBot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /agents/{agentId}/bots/{botId}
+            Method: PUT
+        DeleteBot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /agents/{agentId}/bots/{botId}
+            Method: DELETE
+            
   InferFn:
     Type: AWS::Serverless::Function
     Properties:

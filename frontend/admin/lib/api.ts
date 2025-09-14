@@ -228,3 +228,80 @@ export async function deleteUser(userId: string): Promise<{ message: string }> {
   if (!res.ok) throw new Error(`DELETE /users/${userId} ${res.status}`);
   return res.json();
 }
+
+// Bot Management API
+export type Bot = {
+  botId: string;
+  botName: string;
+  platform: string;
+  siteUrl: string;
+  apiKey: string;
+  status: 'active' | 'inactive';
+  createdAt: string;
+  lastUsed: string | null;
+  configuration: {
+    theme: string;
+    position: string;
+    primaryColor: string;
+    welcomeMessage: string;
+  };
+};
+
+export type CreateBotRequest = {
+  botName: string;
+  platform: string;
+  siteUrl: string;
+};
+
+export async function listBots(agentId: string): Promise<Bot[]> {
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}/bots`, { 
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) } 
+  });
+  if (!res.ok) throw new Error(`GET /agents/${agentId}/bots ${res.status}`);
+  return res.json();
+}
+
+export async function getBot(agentId: string, botId: string): Promise<Bot> {
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}/bots/${encodeURIComponent(botId)}`, { 
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) } 
+  });
+  if (!res.ok) throw new Error(`GET /agents/${agentId}/bots/${botId} ${res.status}`);
+  return res.json();
+}
+
+export async function createBot(agentId: string, botData: CreateBotRequest): Promise<Bot> {
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}/bots`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify(botData),
+  });
+  if (!res.ok) throw new Error(`POST /agents/${agentId}/bots ${res.status}`);
+  return res.json();
+}
+
+export async function updateBot(agentId: string, botId: string, updates: Partial<Bot>): Promise<Bot> {
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}/bots/${encodeURIComponent(botId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`PUT /agents/${agentId}/bots/${botId} ${res.status}`);
+  return res.json();
+}
+
+export async function deleteBot(agentId: string, botId: string): Promise<{ success: boolean }> {
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}/bots/${encodeURIComponent(botId)}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+  });
+  if (!res.ok) throw new Error(`DELETE /agents/${agentId}/bots/${botId} ${res.status}`);
+  return { success: true };
+}
+
+export async function getAllBots(): Promise<Bot[]> {
+  const res = await fetch(`${cfg.apiBase}/bots`, { 
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) } 
+  });
+  if (!res.ok) throw new Error(`GET /bots ${res.status}`);
+  return res.json();
+}

@@ -7,7 +7,6 @@ import { useAgent } from '../lib/agent';
 const tabs = [
   { href: '/', label: 'Agents' },
   { href: '/users', label: 'Users' },
-  { href: '/bot', label: 'Bot' },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }){
