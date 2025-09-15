@@ -64,13 +64,12 @@ Resources:
             FunctionArn: !GetAtt BotAuthFn.Arn
             FunctionInvokeRole: !GetAtt BotAuthApiInvokeRole.Arn
             AuthorizerPayloadFormatVersion: 2.0
-            EnableFunctionDefaultPermissions: true
-            EnableSimpleResponses: true
             Identity:
               Headers:
                 - X-Bot-API-Key
                 - Authorization
         DefaultAuthorizer: AdminCognitoAuth
+        AddDefaultAuthorizerToCorsPreflight: false
   UserPool:
     Type: AWS::Cognito::UserPool
     Properties:
