@@ -49,8 +49,8 @@ Resources:
       StageName: !Ref Stage
       Cors:
         AllowOrigin: "'*'"
-        AllowMethods: "'GET','POST', 'PUT', 'DELETE', 'OPTIONS'"
-        AllowHeaders: "'authorization','content-type','x-bot-signature','x-bot-timestamp','x-bot-api-key'"
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'authorization,content-type,access-control-allow-origin,x-bot-signature,x-bot-timestamp,x-bot-api-key'"
       Auth:
         Authorizers:
           AdminCognitoAuth:
@@ -601,36 +601,7 @@ Resources:
             RestApiId: !Ref Api
             Path: /users/{userId}
             Method: DELETE
-        OptionsUsers:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /users
-            Method: OPTIONS
-        OptionsUsersPath:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /users/{userId}
-            Method: OPTIONS
-        OptionsUsersInvite:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /users/invite
-            Method: OPTIONS
-        OptionsUsersActivate:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /users/{userId}/activate
-            Method: OPTIONS
-        OptionsUsersDeactivate:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /users/{userId}/deactivate
-            Method: OPTIONS
+
       Environment:
         Variables:
           COGNITO_USER_POOL_ID: !Ref UserPool
