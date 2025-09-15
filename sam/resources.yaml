@@ -132,6 +132,7 @@ Resources:
             Principal:
               Service:
                 - "apigateway.amazonaws.com"
+                - "lambda.amazonaws.com"
             Action: "sts:AssumeRole"
       Policies:
         - PolicyName: LambdaAuthorizerInvokePolicy
@@ -162,8 +163,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /ask
             Method: POST
-            Auth:
-              Authorizer: BotLambdaAuth
+            # Auth:
+            #   Authorizer: BotLambdaAuth
         OptionsAsk:
           Type: HttpApi
           Properties:
