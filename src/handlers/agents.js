@@ -18,7 +18,6 @@ const SettingsEvent = z.object({
   notes: z.string().default('')
 });
 
-function ok(status, body){ return { statusCode: status, body: JSON.stringify(body) }; }
 function parse(event){ try { return event?.body ? (typeof event.body==='string'?JSON.parse(event.body):event.body) : {}; } catch { return {}; } }
 
 async function inferSettings(useCase){
