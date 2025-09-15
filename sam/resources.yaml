@@ -5,10 +5,6 @@ Description: App resources (Lambdas, API, roles, env)
 Parameters:
   ProjectName: { Type: String, Default: ops-agent }
   Stage: { Type: String, Default: prod }
-  BotApiSecret:
-    Type: String
-    Default: botsecret_e1b9c2a7c5f24ad6
-    Description: Bot HMAC secret (text for build testing)
   EnableAuth:
     Type: String
     Default: 'true'
