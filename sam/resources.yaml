@@ -116,6 +116,7 @@ Resources:
       CodeUri: ../src
       Handler: handlers/auth/botAuth.handler
       Policies:
+        - AWSLambdaBasicExecutionRole
         - Statement:
             - Effect: Allow
               Action:
