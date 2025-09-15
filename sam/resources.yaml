@@ -73,7 +73,7 @@ Resources:
               Headers:
                 - X-Bot-API-Key
                 - Authorization
-          DefaultAuthorizer: AdminCognitoAuth
+        DefaultAuthorizer: AdminCognitoAuth
   UserPool:
     Type: AWS::Cognito::UserPool
     Properties:
