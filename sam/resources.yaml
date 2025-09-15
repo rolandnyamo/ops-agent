@@ -163,8 +163,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /ask
             Method: POST
-            # Auth:
-            #   Authorizer: BotLambdaAuth
+            Auth:
+              Authorizer: BotLambdaAuth
         OptionsAsk:
           Type: HttpApi
           Properties:
@@ -175,6 +175,8 @@ Resources:
         Variables:
           var1: value1
       Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
         - Statement:
             - Effect: Allow
               Action:
@@ -221,6 +223,8 @@ Resources:
         Variables:
           var1: value1
       Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
         - Statement:
             - Effect: Allow
               Action:
@@ -246,6 +250,8 @@ Resources:
         Variables:
           var1: value1
       Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
         - S3WritePolicy:
             BucketName: "*"
 
@@ -321,6 +327,8 @@ Resources:
         Variables:
           var1: value1
       Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
         - Statement:
             - Effect: Allow
               Action:
@@ -380,6 +388,8 @@ Resources:
         Variables:
           var1: value1
       Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
         - Statement:
             - Effect: Allow
               Action:
@@ -412,6 +422,8 @@ Resources:
         Variables:
           var1: value1
       Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
         - Statement:
             - Effect: Allow
               Action:
@@ -459,6 +471,8 @@ Resources:
         Variables:
           var1: value1
       Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
         - Statement:
             - Effect: Allow
               Action:
@@ -513,6 +527,8 @@ Resources:
         Variables:
            var1: value1
       Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
         - Statement:
             - Effect: Allow
               Action:
@@ -550,6 +566,8 @@ Resources:
         Variables:
           var1: value1
       Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
         - Statement:
             - Effect: Allow
               Action:
@@ -633,6 +651,8 @@ Resources:
         Variables:
           COGNITO_USER_POOL_ID: !Ref UserPool
       Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
         - Statement:
             - Effect: Allow
               Action:
