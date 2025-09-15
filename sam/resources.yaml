@@ -54,11 +54,12 @@ Resources:
       Auth:
         Authorizers:
           AdminCognitoAuth:
-            JwtConfiguration:
-              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
-              audience:
-                - !Ref UserPoolClient
-            IdentitySource: "$request.header.Authorization"
+            UserPoolArn: !GetAtt UserPool.Arn
+            # JwtConfiguration:
+            #   issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+            #   audience:
+            #     - !Ref UserPoolClient
+            # IdentitySource: "$request.header.Authorization"
           BotLambdaAuth:
             FunctionArn: !GetAtt BotAuthFn.Arn
             FunctionInvokeRole: !GetAtt BotAuthApiInvokeRole.Arn
