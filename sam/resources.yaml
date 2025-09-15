@@ -43,14 +43,14 @@ Globals:
         VECTOR_MODE: s3vectors
 
 Resources:
-  HttpApi:
-    Type: AWS::Serverless::HttpApi
+  Api:
+    Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Stage
-      CorsConfiguration:
-        AllowOrigins: ['*']
-        AllowMethods: ['GET','POST', 'PUT', 'DELETE', 'OPTIONS']
-        AllowHeaders: ['authorization','content-type','x-bot-signature','x-bot-timestamp','x-bot-api-key']
+      Cors:
+        AllowOrigin: "'*'"
+        AllowMethods: "'GET','POST', 'PUT', 'DELETE', 'OPTIONS'"
+        AllowHeaders: "'authorization','content-type','x-bot-signature','x-bot-timestamp','x-bot-api-key'"
       Auth:
         Authorizers:
           AdminCognitoAuth:
@@ -143,7 +143,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - "lambda:InvokeFunction"
-                Resource: "*"
+                Resource: !GetAtt BotAuthFn.Arn
 
   AskFn:
     Type: AWS::Serverless::Function
@@ -153,23 +153,23 @@ Resources:
       Handler: handlers/ask.handler
       Events:
         PostQA:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /qa
             Method: POST
         PostAsk:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /ask
             Method: POST
             Auth:
               Authorizer: BotLambdaAuth
         OptionsAsk:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /ask
             Method: OPTIONS
       Environment:
@@ -214,9 +214,9 @@ Resources:
       Handler: handlers/docs.handler
       Events:
         PostIngest:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /docs/ingest
             Method: POST
       Environment:
@@ -239,9 +239,9 @@ Resources:
       Handler: handlers/uploadUrl.handler
       Events:
         PostUploadUrl:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /docs/upload-url
             Method: POST
       Environment:
@@ -344,30 +344,30 @@ Resources:
                 - "*"
       Events:
         ListDocs:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /docs
             Method: GET
             
         GetDoc:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /docs/{docId}
             Method: GET
             
         UpdateDoc:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /docs/{docId}
             Method: PUT
             
         DeleteDoc:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /docs/{docId}
             Method: DELETE
 
@@ -398,9 +398,9 @@ Resources:
                 - !Sub "arn:aws:s3:::${RawBucketName}/*"
       Events:
         ViewDoc:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /docs/view/{docId}
             Method: GET
             
@@ -427,27 +427,27 @@ Resources:
                 - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/openai/key"
       Events:
         CreateAgent:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /agents
             Method: POST
         ListAgents:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /agents
             Method: GET
         GetAgent:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /agents/{agentId}
             Method: GET
         DeleteAgent:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /agents/{agentId}
             Method: DELETE
             
@@ -468,39 +468,39 @@ Resources:
               Resource: "*"
       Events:
         CreateBot:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /agents/{agentId}/bots
             Method: POST
         ListBots:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /agents/{agentId}/bots
             Method: GET
         GetAllBots:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /bots
             Method: GET
         GetBot:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /agents/{agentId}/bots/{botId}
             Method: GET
         UpdateBot:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /agents/{agentId}/bots/{botId}
             Method: PUT
         DeleteBot:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /agents/{agentId}/bots/{botId}
             Method: DELETE
             
@@ -523,9 +523,9 @@ Resources:
                 - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/openai/key"
       Events:
         PostInfer:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /infer
             Method: POST
 
@@ -537,15 +537,15 @@ Resources:
       Handler: handlers/settings.handler
       Events:
         GetSettings:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /settings
             Method: GET
         PutSettings:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /settings
             Method: PUT
       Environment:
@@ -566,69 +566,69 @@ Resources:
       Handler: handlers/users.handler
       Events:
         GetUsers:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users
             Method: GET
         GetUser:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users/{userId}
             Method: GET
         InviteUser:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users/invite
             Method: POST
         ActivateUser:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users/{userId}/activate
             Method: PUT
         DeactivateUser:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users/{userId}/deactivate
             Method: PUT
         DeleteUser:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users/{userId}
             Method: DELETE
         OptionsUsers:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users
             Method: OPTIONS
         OptionsUsersPath:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users/{userId}
             Method: OPTIONS
         OptionsUsersInvite:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users/invite
             Method: OPTIONS
         OptionsUsersActivate:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users/{userId}/activate
             Method: OPTIONS
         OptionsUsersDeactivate:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref HttpApi
+            RestApiId: !Ref Api
             Path: /users/{userId}/deactivate
             Method: OPTIONS
       Environment:
@@ -649,7 +649,7 @@ Resources:
 
 Outputs:
   ApiEndpoint:
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
   UserPoolId:
     Value: !Ref UserPool
   UserPoolClientId:
