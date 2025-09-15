@@ -2,6 +2,7 @@ const { DynamoDBClient, QueryCommand, GetItemCommand, PutItemCommand, UpdateItem
 const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { S3VectorsClient, DeleteVectorsCommand } = require('@aws-sdk/client-s3vectors');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
+const { response } = require('./helpers/utils');
 
 const ddb = new DynamoDBClient({});
 const s3 = new S3Client({});
@@ -11,9 +12,13 @@ const VEC_BUCKET = process.env.VECTOR_BUCKET;
 const VEC_INDEX = process.env.VECTOR_INDEX || 'docs';
 const VEC_MODE = process.env.VECTOR_MODE || 's3vectors';
 
-function ok(status, body) { return { statusCode: status, body: JSON.stringify(body) }; }
+function ok(status, body, callback) {
+  response.statusCode = status;
+  response.body = JSON.stringify(body);
+  return callback(null, response);
+}
 function parseBody(event){
-  if (!event || !event.body) return {};
+  if (!event || !event.body) {return {};}
   try { return typeof event.body === 'string' ? JSON.parse(event.body) : event.body; }
   catch { return {}; }
 }
@@ -42,11 +47,19 @@ function makeItem(input){
     size: input.size || 0,
     createdAt: input.createdAt || now(),
     updatedAt: now(),
-    status,
+    status
   };
 }
 
-exports.handler = async (event) => {
+exports.handler = async (event, context, callback) => {
+  context.callbackWaitsForEmptyEventLoop = false;
+
+  // Handle CORS preflight
+  if ((event.httpMethod || event?.requestContext?.http?.method) === 'OPTIONS') {
+    response.statusCode = 204;
+    response.body = '';
+    return callback(null, response);
+  }
   const method = event?.requestContext?.http?.method || event?.httpMethod || 'GET';
   const path = event?.requestContext?.http?.path || '';
   const docId = event?.pathParameters?.docId;
@@ -60,20 +73,20 @@ exports.handler = async (event) => {
       KeyConditionExpression: '#sk = :sk',
       ExpressionAttributeNames: { '#sk': 'SK' },
       ExpressionAttributeValues: marshall({ ':sk': `DOC#${agentId}` }),
-      Limit: limit,
+      Limit: limit
     };
     console.log('Querying docs with params:', JSON.stringify(params));
     const res = await ddb.send(new QueryCommand(params));
     const items = (res.Items || []).map(unmarshall);
-    return ok(200, { items, count: items.length, nextToken: res.LastEvaluatedKey ? Buffer.from(JSON.stringify(res.LastEvaluatedKey)).toString('base64') : null });
+    return ok(200, { items, count: items.length, nextToken: res.LastEvaluatedKey ? Buffer.from(JSON.stringify(res.LastEvaluatedKey)).toString('base64') : null }, callback);
   }
 
   if (method === 'GET' && docId) {
     const agentId = event?.queryStringParameters?.agentId || 'default';
     const key = { PK: `DOC#${docId}`, SK: `DOC#${agentId}` };
     const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall(key) }));
-    if (!res.Item) return ok(404, { message: 'Not found' });
-    return ok(200, unmarshall(res.Item));
+    if (!res.Item) {return ok(404, { message: 'Not found' }, callback);}
+    return ok(200, unmarshall(res.Item), callback);
   }
 
   if (method === 'PUT' && docId) {
@@ -90,7 +103,7 @@ exports.handler = async (event) => {
     const UpdateExpression = 'SET ' + ['#u = :u', ...expr].join(', ');
     await ddb.send(new UpdateItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }), UpdateExpression, ExpressionAttributeNames: names, ExpressionAttributeValues: marshall(values) }));
     const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }) }));
-    return ok(200, unmarshall(res.Item));
+    return ok(200, unmarshall(res.Item), callback);
   }
 
   if (method === 'DELETE' && docId) {
@@ -130,19 +143,19 @@ exports.handler = async (event) => {
       } catch (e) { console.log('DeleteVectors error (ignored):', e?.message || e); }
     }
     await ddb.send(new DeleteItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }) }));
-    return ok(200, { ok: true });
+    return ok(200, { ok: true }, callback);
   }
 
   // POST /docs/ingest (simple create from upload-url/url)
   if (method === 'POST' && path.endsWith('/docs/ingest')) {
     const body = parseBody(event);
-    if (!body.docId) return ok(400, { message: 'docId is required (from upload-url response)' });
+    if (!body.docId) {return ok(400, { message: 'docId is required (from upload-url response)' }, callback);}
     const item = makeItem({ ...body, status: 'UPLOADED' });
     await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(item) }));
-    return ok(202, item);
+    return ok(202, item, callback);
   }
 
-  return ok(405, { message: 'Method Not Allowed' });
+  return ok(405, { message: 'Method Not Allowed' }, callback);
 };
 
 async function ddbCatch(fn){ try { return await fn(); } catch { return null; } }

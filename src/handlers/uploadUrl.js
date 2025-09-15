@@ -1,5 +1,6 @@
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { response } = require('./helpers/utils');
 const crypto = require('node:crypto');
 
 const s3 = new S3Client({});
@@ -10,15 +11,30 @@ function parse(event){
   catch { return {}; }
 }
 
-exports.handler = async (event) => {
-  if (!BUCKET) return { statusCode: 500, body: JSON.stringify({ message: 'RAW_BUCKET not set' }) };
+exports.handler = async (event, context, callback) => {
+  context.callbackWaitsForEmptyEventLoop = false;
+
+  // Handle CORS preflight
+  if ((event.httpMethod || event?.requestContext?.http?.method) === 'OPTIONS') {
+    response.statusCode = 204;
+    response.body = '';
+    return callback(null, response);
+  }
+
+  if (!BUCKET) {
+    response.statusCode = 500;
+    response.body = JSON.stringify({ message: 'RAW_BUCKET not set' });
+    return callback(null, response);
+  }
   const body = parse(event);
   const agentId = (event?.queryStringParameters?.agentId) || body.agentId || 'default';
   const filename = (body.filename || 'upload.bin').replace(/[^A-Za-z0-9._-]/g, '_');
   const contentType = body.contentType || 'application/octet-stream';
   const allow = ['text/plain','text/html','application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
   if (!allow.includes(contentType)) {
-    return { statusCode: 400, body: JSON.stringify({ message: `Unsupported contentType ${contentType}` }) };
+    response.statusCode = 400;
+    response.body = JSON.stringify({ message: `Unsupported contentType ${contentType}` });
+    return callback(null, response);
   }
   const docId = (body.docId && String(body.docId)) || crypto.randomUUID();
   const key = `raw/${agentId}/${docId}/${filename}`;
@@ -30,5 +46,7 @@ exports.handler = async (event) => {
   console.log(`bucket: ${BUCKET}`);
   console.log(`key: ${key}`);
   console.log(`filename: ${filename}`);
-  return { statusCode: 200, body: JSON.stringify({ agentId, docId, fileKey: key, uploadUrl, contentType }) };
+  response.statusCode = 200;
+  response.body = JSON.stringify({ agentId, docId, fileKey: key, uploadUrl, contentType });
+  return callback(null, response);
 };

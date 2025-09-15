@@ -36,14 +36,14 @@ async function getOpenAIApiKey() {
       Name: '/openai/key',
       WithDecryption: true
     });
-    
+
     const response = await ssmClient.send(command);
     cachedApiKey = response.Parameter?.Value;
-    
+
     if (!cachedApiKey) {
       throw new Error('SSM parameter /openai/key not found or empty');
     }
-    
+
     console.log('Using OpenAI API key from SSM parameter /openai/key');
     return cachedApiKey;
   } catch (error) {

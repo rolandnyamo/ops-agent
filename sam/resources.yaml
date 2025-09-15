@@ -166,12 +166,6 @@ Resources:
             Method: POST
             Auth:
               Authorizer: BotLambdaAuth
-        OptionsAsk:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /ask
-            Method: OPTIONS
       Environment:
         Variables:
           var1: value1

@@ -1,6 +1,7 @@
 const { S3Client, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { DynamoDBClient, GetItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
+const { response } = require('./helpers/utils');
 
 const s3 = new S3Client({});
 const ddb = new DynamoDBClient({});
@@ -8,18 +9,19 @@ const ddb = new DynamoDBClient({});
 const TABLE = process.env.DOCS_TABLE || 'ops-agent-prod-docs-326445141506-us-east-1';
 const BUCKET = process.env.RAW_BUCKET || 'ops-agent-prod-raw-326445141506-us-east-1';
 
-exports.handler = async (event) => {
+exports.handler = async (event, context, callback) => {
+  context.callbackWaitsForEmptyEventLoop = false;
+
   console.log('viewDoc handler:', JSON.stringify(event, null, 2));
 
   const method = event?.requestContext?.http?.method || event?.httpMethod || 'GET';
   const docId = event?.pathParameters?.docId;
 
   if (method !== 'GET' || !docId) {
-    return {
-      statusCode: 405,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'Method Not Allowed' })
-    };
+    response.statusCode = 405;
+    response.headers = { 'Content-Type': 'application/json' };
+    response.body = JSON.stringify({ message: 'Method Not Allowed' });
+    return callback(null, response);
   }
 
   try {
@@ -27,28 +29,26 @@ exports.handler = async (event) => {
 
     // First, get the document metadata from DynamoDB
     const docKey = { PK: `DOC#${docId}`, SK: `DOC#${agentId}` };
-    const docRes = await ddb.send(new GetItemCommand({ 
-      TableName: TABLE, 
-      Key: marshall(docKey) 
+    const docRes = await ddb.send(new GetItemCommand({
+      TableName: TABLE,
+      Key: marshall(docKey)
     }));
 
     if (!docRes.Item) {
-      return {
-        statusCode: 404,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'Document not found' })
-      };
+      response.statusCode = 404;
+      response.headers = { 'Content-Type': 'application/json' };
+      response.body = JSON.stringify({ message: 'Document not found' });
+      return callback(null, response);
     }
 
     const doc = unmarshall(docRes.Item);
-    
+
     // If the document doesn't have a fileKey, it might be a URL-based document
     if (!doc.fileKey) {
-      return {
-        statusCode: 400,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'Document has no associated file' })
-      };
+      response.statusCode = 400;
+      response.headers = { 'Content-Type': 'application/json' };
+      response.body = JSON.stringify({ message: 'Document has no associated file' });
+      return callback(null, response);
     }
 
     // Get the actual file from S3
@@ -92,7 +92,7 @@ exports.handler = async (event) => {
       // Sanitize filename for HTTP header (remove non-ASCII characters)
       const sanitizedTitle = (doc.title || 'document').replace(/[^\x20-\x7E]/g, '_');
 
-      return {
+      const binaryResponse = {
         statusCode: 200,
         headers: {
           'Content-Type': contentType || 'application/octet-stream',
@@ -102,10 +102,11 @@ exports.handler = async (event) => {
         body: buffer.toString('base64'),
         isBase64Encoded: true
       };
+      return callback(null, binaryResponse);
 
     } catch (s3Error) {
       console.error('S3 error:', s3Error);
-      
+
       // If the exact file isn't found, try to find any file under the document's directory
       // This handles cases where the filename might have been modified during upload
       try {
@@ -118,7 +119,7 @@ exports.handler = async (event) => {
 
         if (listResponse.Contents && listResponse.Contents.length > 0) {
           const actualKey = listResponse.Contents[0].Key;
-          
+
           const s3Response = await s3.send(new GetObjectCommand({
             Bucket: BUCKET,
             Key: actualKey
@@ -156,7 +157,7 @@ exports.handler = async (event) => {
           // Sanitize filename for HTTP header (remove non-ASCII characters)
           const sanitizedTitle = (doc.title || 'document').replace(/[^\x20-\x7E]/g, '_');
 
-          return {
+          const binaryResponse = {
             statusCode: 200,
             headers: {
               'Content-Type': contentType || 'application/octet-stream',
@@ -166,24 +167,23 @@ exports.handler = async (event) => {
             body: buffer.toString('base64'),
             isBase64Encoded: true
           };
+          return callback(null, binaryResponse);
         }
       } catch (listError) {
         console.error('List objects error:', listError);
       }
 
-      return {
-        statusCode: 404,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'Document file not found' })
-      };
+      response.statusCode = 404;
+      response.headers = { 'Content-Type': 'application/json' };
+      response.body = JSON.stringify({ message: 'Document file not found' });
+      return callback(null, response);
     }
 
   } catch (error) {
     console.error('viewDoc error:', error);
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'Internal server error' })
-    };
+    response.statusCode = 500;
+    response.headers = { 'Content-Type': 'application/json' };
+    response.body = JSON.stringify({ message: 'Internal server error' });
+    return callback(null, response);
   }
 };

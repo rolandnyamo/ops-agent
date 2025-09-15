@@ -5,7 +5,7 @@ const { CognitoJwtVerifier } = require('aws-jwt-verify');
 const verifier = CognitoJwtVerifier.create({
   userPoolId: process.env.COGNITO_USER_POOL_ID,
   clientId: process.env.COGNITO_USER_POOL_CLIENT_ID,
-  tokenUse: 'access',
+  tokenUse: 'access'
 });
 
 exports.handler = async (event) => {
@@ -13,13 +13,13 @@ exports.handler = async (event) => {
     const headers = Object.fromEntries(
       Object.entries(event.headers || {}).map(([k, v]) => [k.toLowerCase(), v])
     );
-    
+
     const botApiKey = headers['x-bot-api-key'];
     const authHeader = headers['authorization'];
-    
-    console.log('Bot Auth - checking headers:', { 
-      hasBotApiKey: !!botApiKey, 
-      hasAuthHeader: !!authHeader 
+
+    console.log('Bot Auth - checking headers:', {
+      hasBotApiKey: !!botApiKey,
+      hasAuthHeader: !!authHeader
     });
 
     // Option 1: Bot API Key (for external bots like WordPress)
@@ -32,8 +32,8 @@ exports.handler = async (event) => {
       }
 
       const agentId = botInfo.PK.replace('AGENT#', '');
-      
-      return { 
+
+      return {
         isAuthorized: true,
         context: {
           authType: 'bot',
@@ -49,12 +49,12 @@ exports.handler = async (event) => {
     if (authHeader && authHeader.startsWith('Bearer ')) {
       console.log('Bot Auth - validating admin access token');
       const token = authHeader.split(' ')[1];
-      
+
       try {
         const payload = await verifier.verify(token);
         console.log('Bot Auth - valid admin token for user:', payload.sub);
-        
-        return { 
+
+        return {
           isAuthorized: true,
           context: {
             authType: 'admin',
@@ -73,7 +73,7 @@ exports.handler = async (event) => {
 
     console.log('Bot Auth - no valid authentication found');
     return { isAuthorized: false };
-    
+
   } catch (e) {
     console.error('BotAuth error', e);
     return { isAuthorized: false };

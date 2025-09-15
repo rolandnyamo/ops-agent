@@ -1,13 +1,14 @@
-const { 
-  CognitoIdentityProviderClient, 
-  ListUsersCommand, 
-  AdminCreateUserCommand, 
+const {
+  CognitoIdentityProviderClient,
+  ListUsersCommand,
+  AdminCreateUserCommand,
   AdminDeleteUserCommand,
   AdminEnableUserCommand,
   AdminDisableUserCommand,
   AdminGetUserCommand,
   AdminListGroupsForUserCommand
 } = require('@aws-sdk/client-cognito-identity-provider');
+const { response } = require('./helpers/utils');
 
 const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION });
 const USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || 'us-east-1_plBqP2xqJ';
@@ -54,17 +55,17 @@ function getUserInfoFromEvent(event) {
       console.log('No valid authorization header found');
       return { username: null, payload: null };
     }
-    
+
     const token = authHeader.substring(7);
     const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
     console.log('JWT payload:', JSON.stringify(payload, null, 2));
-    
+
     // Try different username fields in order of preference
-    const username = payload['cognito:username'] || 
-                    payload.username || 
-                    payload.sub || 
+    const username = payload['cognito:username'] ||
+                    payload.username ||
+                    payload.sub ||
                     payload.email;
-                    
+
     console.log('Extracted username:', username);
     return { username, payload };
   } catch (error) {
@@ -93,142 +94,142 @@ function formatUser(cognitoUser) {
 }
 
 function getDisplayStatus(userStatus, enabled) {
-  if (!enabled) return 'Inactive';
-  
+  if (!enabled) {return 'Inactive';}
+
   switch (userStatus) {
-    case 'FORCE_CHANGE_PASSWORD': return 'Invited';
-    case 'CONFIRMED': return 'Active';
-    case 'UNCONFIRMED': return 'Pending';
-    case 'ARCHIVED': return 'Inactive';
-    case 'COMPROMISED': return 'Compromised';
-    case 'RESET_REQUIRED': return 'Reset Required';
-    default: return userStatus;
+  case 'FORCE_CHANGE_PASSWORD': return 'Invited';
+  case 'CONFIRMED': return 'Active';
+  case 'UNCONFIRMED': return 'Pending';
+  case 'ARCHIVED': return 'Inactive';
+  case 'COMPROMISED': return 'Compromised';
+  case 'RESET_REQUIRED': return 'Reset Required';
+  default: return userStatus;
   }
 }
 
 function parseBody(event) {
-  if (!event || !event.body) return {};
-  try { 
-    return typeof event.body === 'string' ? JSON.parse(event.body) : event.body; 
-  } catch { 
-    return {}; 
+  if (!event || !event.body) {return {};}
+  try {
+    return typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
+  } catch {
+    return {};
   }
 }
 
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
-  };
-}
+exports.handler = async (event, context, callback) => {
+  context.callbackWaitsForEmptyEventLoop = false;
 
-exports.handler = async (event) => {
+  // Handle CORS preflight
+  if ((event.httpMethod || event?.requestContext?.http?.method) === 'OPTIONS') {
+    response.statusCode = 204;
+    response.body = '';
+    return callback(null, response);
+  }
+
   console.log('Event object:', JSON.stringify(event, null, 2));
-  
+
   const method = event.httpMethod || event.requestContext?.http?.method || 'GET';
   const pathParameters = event.pathParameters || {};
   const body = parseBody(event);
-  
+
   console.log('Method:', method);
   console.log('Path:', event.path);
   console.log('Resource:', event.resource);
   console.log('Path parameters:', pathParameters);
-  
-  // Handle CORS preflight
-  if (method === 'OPTIONS') {
-    return { statusCode: 200, headers: corsHeaders(), body: '' };
-  }
 
   try {
     // Check if user is admin
     const userInfo = getUserInfoFromEvent(event);
     if (!userInfo || !userInfo.username) {
-      return { 
-        statusCode: 401, 
-        headers: corsHeaders(),
-        body: JSON.stringify({ message: 'Unauthorized - No valid token' }) 
-      };
+      response.statusCode = 401;
+      response.body = JSON.stringify({ message: 'Unauthorized - No valid token' });
+      return callback(null, response);
     }
 
     const isAdmin = await isUserAdmin(userInfo.username, userInfo.payload);
     if (!isAdmin) {
-      return { 
-        statusCode: 403, 
-        headers: corsHeaders(),
-        body: JSON.stringify({ message: 'Forbidden - Admin access required' }) 
-      };
+      response.statusCode = 403;
+      response.body = JSON.stringify({ message: 'Forbidden - Admin access required' });
+      return callback(null, response);
     }
 
     // Route to appropriate handler
     switch (method) {
-      case 'GET':
-        if (pathParameters.userId) {
-          return await getUser(pathParameters.userId);
-        } else {
-          return await listUsers();
-        }
-      
-      case 'POST':
-        const path = event.path || event.requestContext?.http?.path || '';
-        if (path.includes('/invite')) {
-          return await inviteUser(body);
-        }
-        break;
-        
-      case 'PUT':
-        const userId = pathParameters.userId;
-        if (!userId) {
-          return { 
-            statusCode: 400, 
-            headers: corsHeaders(),
-            body: JSON.stringify({ message: 'User ID required' }) 
-          };
-        }
-        
-        const putPath = event.path || event.requestContext?.http?.path || '';
-        if (putPath.includes('/activate')) {
-          return await activateUser(userId);
-        } else if (putPath.includes('/deactivate')) {
-          return await deactivateUser(userId);
-        }
-        break;
-        
-      case 'DELETE':
-        const userIdToDelete = pathParameters.userId;
-        if (!userIdToDelete) {
-          return { 
-            statusCode: 400, 
-            headers: corsHeaders(),
-            body: JSON.stringify({ message: 'User ID required' }) 
-          };
-        }
-        return await deleteUser(userIdToDelete);
-        
-      default:
-        return { 
-          statusCode: 405, 
-          headers: corsHeaders(),
-          body: JSON.stringify({ message: 'Method Not Allowed' }) 
-        };
+    case 'GET':
+      if (pathParameters.userId) {
+        const result = await getUser(pathParameters.userId);
+        response.statusCode = result.statusCode;
+        response.body = result.body;
+        return callback(null, response);
+      } else {
+        const result = await listUsers();
+        response.statusCode = result.statusCode;
+        response.body = result.body;
+        return callback(null, response);
+      }
+
+    case 'POST':
+      const path = event.path || event.requestContext?.http?.path || '';
+      if (path.includes('/invite')) {
+        const result = await inviteUser(body);
+        response.statusCode = result.statusCode;
+        response.body = result.body;
+        return callback(null, response);
+      }
+      break;
+
+    case 'PUT':
+      const userId = pathParameters.userId;
+      if (!userId) {
+        response.statusCode = 400;
+        response.body = JSON.stringify({ message: 'User ID required' });
+        return callback(null, response);
+      }
+
+      const putPath = event.path || event.requestContext?.http?.path || '';
+      if (putPath.includes('/activate')) {
+        const result = await activateUser(userId);
+        response.statusCode = result.statusCode;
+        response.body = result.body;
+        return callback(null, response);
+      } else if (putPath.includes('/deactivate')) {
+        const result = await deactivateUser(userId);
+        response.statusCode = result.statusCode;
+        response.body = result.body;
+        return callback(null, response);
+      }
+      break;
+
+    case 'DELETE':
+      const userIdToDelete = pathParameters.userId;
+      if (!userIdToDelete) {
+        response.statusCode = 400;
+        response.body = JSON.stringify({ message: 'User ID required' });
+        return callback(null, response);
+      }
+      const result = await deleteUser(userIdToDelete);
+      response.statusCode = result.statusCode;
+      response.body = result.body;
+      return callback(null, response);
+
+    default:
+      response.statusCode = 405;
+      response.body = JSON.stringify({ message: 'Method Not Allowed' });
+      return callback(null, response);
     }
 
-    return { 
-      statusCode: 404, 
-      headers: corsHeaders(),
-      body: JSON.stringify({ message: 'Not Found' }) 
-    };
+    response.statusCode = 404;
+    response.body = JSON.stringify({ message: 'Not Found' });
+    return callback(null, response);
 
   } catch (error) {
     console.error('Users handler error:', error);
-    return { 
-      statusCode: 500, 
-      headers: corsHeaders(),
-      body: JSON.stringify({ 
-        message: 'Internal server error',
-        error: error.message 
-      }) 
-    };
+    response.statusCode = 500;
+    response.body = JSON.stringify({
+      message: 'Internal server error',
+      error: error.message
+    });
+    return callback(null, response);
   }
 };
 
@@ -239,14 +240,13 @@ async function listUsers() {
       UserPoolId: USER_POOL_ID,
       Limit: 60 // Cognito max per request
     });
-    
+
     const response = await cognitoClient.send(command);
     const users = response.Users?.map(formatUser) || [];
-    
-    return { 
-      statusCode: 200, 
-      headers: corsHeaders(),
-      body: JSON.stringify({ users }) 
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ users })
     };
   } catch (error) {
     console.error('List users error:', error);
@@ -261,7 +261,7 @@ async function getUser(userId) {
       UserPoolId: USER_POOL_ID,
       Username: userId
     });
-    
+
     const response = await cognitoClient.send(command);
     const user = {
       userId: response.Username,
@@ -273,18 +273,18 @@ async function getUser(userId) {
       lastModified: response.UserLastModifiedDate,
       displayStatus: getDisplayStatus(response.UserStatus, response.Enabled)
     };
-    
-    return { 
-      statusCode: 200, 
-      headers: corsHeaders(),
-      body: JSON.stringify({ user }) 
+
+    return {
+      statusCode: 200,
+
+      body: JSON.stringify({ user })
     };
   } catch (error) {
     if (error.name === 'UserNotFoundException') {
-      return { 
-        statusCode: 404, 
-        headers: corsHeaders(),
-        body: JSON.stringify({ message: 'User not found' }) 
+      return {
+        statusCode: 404,
+
+        body: JSON.stringify({ message: 'User not found' })
       };
     }
     console.error('Get user error:', error);
@@ -295,12 +295,12 @@ async function getUser(userId) {
 // Invite new user
 async function inviteUser(body) {
   const { email } = body;
-  
+
   if (!email || !email.includes('@')) {
-    return { 
-      statusCode: 400, 
-      headers: corsHeaders(),
-      body: JSON.stringify({ message: 'Valid email address required' }) 
+    return {
+      statusCode: 400,
+
+      body: JSON.stringify({ message: 'Valid email address required' })
     };
   }
 
@@ -315,24 +315,24 @@ async function inviteUser(body) {
       DesiredDeliveryMediums: ['EMAIL'],
       MessageAction: 'SEND' // Send welcome email
     });
-    
+
     const response = await cognitoClient.send(command);
     const user = formatUser(response.User);
-    
-    return { 
-      statusCode: 201, 
-      headers: corsHeaders(),
-      body: JSON.stringify({ 
+
+    return {
+      statusCode: 201,
+
+      body: JSON.stringify({
         message: 'User invited successfully',
-        user 
-      }) 
+        user
+      })
     };
   } catch (error) {
     if (error.name === 'UsernameExistsException') {
-      return { 
-        statusCode: 409, 
-        headers: corsHeaders(),
-        body: JSON.stringify({ message: 'User already exists' }) 
+      return {
+        statusCode: 409,
+
+        body: JSON.stringify({ message: 'User already exists' })
       };
     }
     console.error('Invite user error:', error);
@@ -347,20 +347,20 @@ async function activateUser(userId) {
       UserPoolId: USER_POOL_ID,
       Username: userId
     });
-    
+
     await cognitoClient.send(command);
-    
-    return { 
-      statusCode: 200, 
-      headers: corsHeaders(),
-      body: JSON.stringify({ message: 'User activated successfully' }) 
+
+    return {
+      statusCode: 200,
+
+      body: JSON.stringify({ message: 'User activated successfully' })
     };
   } catch (error) {
     if (error.name === 'UserNotFoundException') {
-      return { 
-        statusCode: 404, 
-        headers: corsHeaders(),
-        body: JSON.stringify({ message: 'User not found' }) 
+      return {
+        statusCode: 404,
+
+        body: JSON.stringify({ message: 'User not found' })
       };
     }
     console.error('Activate user error:', error);
@@ -375,20 +375,20 @@ async function deactivateUser(userId) {
       UserPoolId: USER_POOL_ID,
       Username: userId
     });
-    
+
     await cognitoClient.send(command);
-    
-    return { 
-      statusCode: 200, 
-      headers: corsHeaders(),
-      body: JSON.stringify({ message: 'User deactivated successfully' }) 
+
+    return {
+      statusCode: 200,
+
+      body: JSON.stringify({ message: 'User deactivated successfully' })
     };
   } catch (error) {
     if (error.name === 'UserNotFoundException') {
-      return { 
-        statusCode: 404, 
-        headers: corsHeaders(),
-        body: JSON.stringify({ message: 'User not found' }) 
+      return {
+        statusCode: 404,
+
+        body: JSON.stringify({ message: 'User not found' })
       };
     }
     console.error('Deactivate user error:', error);
@@ -403,20 +403,20 @@ async function deleteUser(userId) {
       UserPoolId: USER_POOL_ID,
       Username: userId
     });
-    
+
     await cognitoClient.send(command);
-    
-    return { 
-      statusCode: 200, 
-      headers: corsHeaders(),
-      body: JSON.stringify({ message: 'User deleted successfully' }) 
+
+    return {
+      statusCode: 200,
+
+      body: JSON.stringify({ message: 'User deleted successfully' })
     };
   } catch (error) {
     if (error.name === 'UserNotFoundException') {
-      return { 
-        statusCode: 404, 
-        headers: corsHeaders(),
-        body: JSON.stringify({ message: 'User not found' }) 
+      return {
+        statusCode: 404,
+
+        body: JSON.stringify({ message: 'User not found' })
       };
     }
     console.error('Delete user error:', error);

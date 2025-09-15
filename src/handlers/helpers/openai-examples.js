@@ -5,13 +5,13 @@ const { parseStructured, generateJSON, generateText } = require('./openai');
 const CalendarEvent = z.object({
   name: z.string(),
   date: z.string(),
-  participants: z.array(z.string()),
+  participants: z.array(z.string())
 });
 
 const SentimentAnalysis = z.object({
   sentiment: z.enum(['positive', 'negative', 'neutral']),
   confidence: z.number().min(0).max(1),
-  keywords: z.array(z.string()),
+  keywords: z.array(z.string())
 });
 
 const ProductReview = z.object({
@@ -19,7 +19,7 @@ const ProductReview = z.object({
   summary: z.string(),
   pros: z.array(z.string()),
   cons: z.array(z.string()),
-  recommendation: z.boolean(),
+  recommendation: z.boolean()
 });
 
 /**
@@ -27,13 +27,13 @@ const ProductReview = z.object({
  */
 async function extractCalendarEvent(text) {
   return await parseStructured({
-    model: "gpt-4o-2024-08-06",
+    model: 'gpt-4o-2024-08-06',
     input: [
-      { role: "system", content: "Extract the event information from the user's message." },
-      { role: "user", content: text }
+      { role: 'system', content: 'Extract the event information from the user\'s message.' },
+      { role: 'user', content: text }
     ],
     schema: CalendarEvent,
-    schemaName: "event"
+    schemaName: 'event'
   });
 }
 
@@ -42,16 +42,16 @@ async function extractCalendarEvent(text) {
  */
 async function analyzeSentiment(text) {
   return await generateJSON({
-    model: "gpt-4o-mini",
+    model: 'gpt-4o-mini',
     input: [
-      { 
-        role: "system", 
-        content: "Analyze the sentiment of the given text. Provide a sentiment classification, confidence score, and key sentiment-bearing words." 
+      {
+        role: 'system',
+        content: 'Analyze the sentiment of the given text. Provide a sentiment classification, confidence score, and key sentiment-bearing words.'
       },
-      { role: "user", content: text }
+      { role: 'user', content: text }
     ],
     schema: SentimentAnalysis,
-    schemaName: "sentiment_analysis"
+    schemaName: 'sentiment_analysis'
   });
 }
 
@@ -60,16 +60,16 @@ async function analyzeSentiment(text) {
  */
 async function summarizeProductReview(reviewText) {
   return await parseStructured({
-    model: "gpt-4o-2024-08-06",
+    model: 'gpt-4o-2024-08-06',
     input: [
-      { 
-        role: "system", 
-        content: "Analyze this product review and extract key information including rating, summary, pros, cons, and whether you'd recommend it." 
+      {
+        role: 'system',
+        content: 'Analyze this product review and extract key information including rating, summary, pros, cons, and whether you\'d recommend it.'
       },
-      { role: "user", content: reviewText }
+      { role: 'user', content: reviewText }
     ],
     schema: ProductReview,
-    schemaName: "product_review"
+    schemaName: 'product_review'
   });
 }
 
@@ -78,10 +78,10 @@ async function summarizeProductReview(reviewText) {
  */
 async function generateSimpleText(prompt) {
   return await generateText({
-    model: "gpt-4o-mini",
+    model: 'gpt-4o-mini',
     input: [
-      { role: "system", content: "You are a helpful assistant." },
-      { role: "user", content: prompt }
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: prompt }
     ]
   });
 }
@@ -91,15 +91,15 @@ async function generateSimpleText(prompt) {
  */
 async function generateMarkdown(content, topic) {
   return await generateText({
-    model: "gpt-4o-mini",
+    model: 'gpt-4o-mini',
     input: [
-      { 
-        role: "system", 
-        content: "Convert the given content into well-formatted markdown with appropriate headers, lists, and emphasis." 
+      {
+        role: 'system',
+        content: 'Convert the given content into well-formatted markdown with appropriate headers, lists, and emphasis.'
       },
-      { role: "user", content: `Topic: ${topic}\n\nContent: ${content}` }
+      { role: 'user', content: `Topic: ${topic}\n\nContent: ${content}` }
     ],
-    format: "markdown"
+    format: 'markdown'
   });
 }
 

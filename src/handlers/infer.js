@@ -1,4 +1,5 @@
 const { generateText } = require('./helpers/openai');
+const { response } = require('./helpers/utils');
 
 function parse(event){
   try { return event && event.body ? (typeof event.body === 'string' ? JSON.parse(event.body) : event.body) : {}; } catch { return {}; }
@@ -11,14 +12,14 @@ async function openaiResponses(prompt, system){
       { role: 'system', content: system || 'You return only valid minified JSON.' },
       { role: 'user', content: prompt }
     ],
-    format: 'json' 
+    format: 'json'
   });
-  
+
   if (!result.success) {
     console.error('OpenAI error:', result.error);
     throw new Error('OpenAI request failed');
   }
-  
+
   let data;
   try {
     data = typeof result.text === 'string' ? JSON.parse(result.text) : result.text;
@@ -42,7 +43,9 @@ function docPrompt(filename, sampleText, year, knownCategories){
   `\nReturn only JSON { title, category, audience, year, version, description }.\nFILENAME: ${filename}\nSAMPLE:\n${String(sampleText||'').slice(0,4000)}`;
 }
 
-exports.handler = async (event) => {
+exports.handler = async (event, context, callback) => {
+  context.callbackWaitsForEmptyEventLoop = false;
+
   try {
     const qs = event?.queryStringParameters || {};
     const mode = (qs.mode || 'settings').toLowerCase();
@@ -51,9 +54,15 @@ exports.handler = async (event) => {
 
     if (mode === 'settings') {
       const useCase = String(body.useCase || '').trim();
-      if (!useCase) return { statusCode: 400, body: JSON.stringify({ message: 'useCase is required' }) };
+      if (!useCase) {
+        response.statusCode = 400;
+        response.body = JSON.stringify({ message: 'useCase is required' });
+        return callback(null, response);
+      }
       const data = await openaiResponses(settingsPrompt(useCase, nowYear));
-      return { statusCode: 200, body: JSON.stringify(data) };
+      response.statusCode = 200;
+      response.body = JSON.stringify(data);
+      return callback(null, response);
     }
 
     if (mode === 'doc') {
@@ -65,12 +74,18 @@ exports.handler = async (event) => {
       data.year = data.year || nowYear;
       data.version = data.version || 'v1';
       data.audience = data.audience || 'All';
-      return { statusCode: 200, body: JSON.stringify(data) };
+      response.statusCode = 200;
+      response.body = JSON.stringify(data);
+      return callback(null, response);
     }
 
-    return { statusCode: 400, body: JSON.stringify({ message: 'unsupported mode' }) };
+    response.statusCode = 400;
+    response.body = JSON.stringify({ message: 'unsupported mode' });
+    return callback(null, response);
   } catch (e) {
     console.error('infer error', e);
-    return { statusCode: 500, body: JSON.stringify({ message: 'infer failed' }) };
+    response.statusCode = 500;
+    response.body = JSON.stringify({ message: 'infer failed' });
+    return callback(null, response);
   }
 };

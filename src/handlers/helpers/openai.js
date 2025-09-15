@@ -31,17 +31,17 @@ class OpenAIHelper {
    * @param {Object} options.additionalParams - Additional parameters to pass to the API
    * @returns {Promise<Object>} Parsed response object
    */
-  async parseStructured({ 
-    model = 'gpt-4o-2024-08-06', 
-    input, 
-    schema, 
+  async parseStructured({
+    model = 'gpt-4o-2024-08-06',
+    input,
+    schema,
     schemaName = 'response',
-    additionalParams = {} 
+    additionalParams = {}
   }) {
     if (!input || !Array.isArray(input)) {
       throw new Error('Input must be an array of message objects');
     }
-    
+
     if (!schema) {
       throw new Error('Schema is required for structured parsing');
     }
@@ -52,7 +52,7 @@ class OpenAIHelper {
         model,
         input,
         text: {
-          format: zodTextFormat(schema, schemaName),
+          format: zodTextFormat(schema, schemaName)
         },
         ...additionalParams
       });
@@ -83,12 +83,12 @@ class OpenAIHelper {
    * @param {Object} options.additionalParams - Additional parameters to pass to the API
    * @returns {Promise<Object>} JSON response object
    */
-  async generateJSON({ 
-    model = 'gpt-4o-mini', 
-    input, 
-    schema, 
+  async generateJSON({
+    model = 'gpt-4o-mini',
+    input,
+    schema,
     schemaName = 'json_response',
-    additionalParams = {} 
+    additionalParams = {}
   }) {
     return this.parseStructured({
       model,
@@ -108,11 +108,11 @@ class OpenAIHelper {
    * @param {Object} options.additionalParams - Additional parameters to pass to the API
    * @returns {Promise<Object>} Text response object
    */
-  async generateText({ 
-    model = 'gpt-4o-mini', 
-    input, 
+  async generateText({
+    model = 'gpt-4o-mini',
+    input,
     format,
-    additionalParams = {} 
+    additionalParams = {}
   }) {
     if (!input || !Array.isArray(input)) {
       throw new Error('Input must be an array of message objects');
@@ -173,7 +173,7 @@ class OpenAIHelper {
       // This appears to be a structured request with Zod schema
       const schema = options.text.format.schema;
       const schemaName = options.text.format.name || 'response';
-      
+
       return this.parseStructured({
         model: options.model,
         input: options.input,
