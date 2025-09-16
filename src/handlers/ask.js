@@ -165,7 +165,7 @@ exports.handler = async (event, context, callback) => {
   const debug = body?.debug === true;
 
   // Check authentication context from the authorizer
-  const authorizerContext = event.requestContext?.authorizer?.lambda;
+  const authorizerContext = event.requestContext?.authorizer;
   let botInfo = null;
   let authType = null;
 

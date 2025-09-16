@@ -8,44 +8,73 @@ const verifier = CognitoJwtVerifier.create({
   tokenUse: 'access'
 });
 
-exports.handler = async (event) => {
+// Help function to generate an IAM policy
+const generatePolicy = function(principalId, effect, resource, context = {}) {
+  // Required output:
+  const authResponse = {};
+  authResponse.principalId = principalId;
+  if (effect && resource) {
+    const policyDocument = {};
+    policyDocument.Version = '2012-10-17'; // default version
+    policyDocument.Statement = [];
+    const statementOne = {};
+    statementOne.Action = 'execute-api:Invoke'; // default action
+    statementOne.Effect = effect;
+    statementOne.Resource = resource;
+    policyDocument.Statement[0] = statementOne;
+    authResponse.policyDocument = policyDocument;
+  }
+  // Optional output with custom properties
+  authResponse.context = context;
+  return authResponse;
+};
+
+const generateAllow = function(principalId, resource, context = {}) {
+  return generatePolicy(principalId, 'Allow', resource, context);
+};
+
+const generateDeny = function(principalId, resource) {
+  return generatePolicy(principalId, 'Deny', resource);
+};
+
+exports.handler = async (event, context, callback) => {
+  console.log('Bot Auth - Received event:', JSON.stringify(event, null, 2));
+
   try {
-    const headers = Object.fromEntries(
-      Object.entries(event.headers || {}).map(([k, v]) => [k.toLowerCase(), v])
-    );
+    // Retrieve request parameters from the Lambda function input
+    const headers = event.headers || {};
+    const queryStringParameters = event.queryStringParameters || {};
 
-    const botApiKey = headers['x-bot-api-key'];
-    const authHeader = headers['authorization'];
-
-    console.log('Bot Auth - checking headers:', {
-      hasBotApiKey: !!botApiKey,
-      hasAuthHeader: !!authHeader
-    });
-
-    // Option 1: Bot API Key (for external bots like WordPress)
-    if (botApiKey) {
-      console.log('Bot Auth - validating bot API key');
-      const botInfo = await validateBotApiKey(botApiKey);
-      if (!botInfo || botInfo.status !== 'active') {
-        console.log('Bot Auth - invalid or inactive bot API key');
-        return { isAuthorized: false };
-      }
-
-      const agentId = botInfo.PK.replace('AGENT#', '');
-
-      return {
-        isAuthorized: true,
-        context: {
-          authType: 'bot',
-          botId: botInfo.botId,
-          agentId: agentId,
-          siteUrl: botInfo.siteUrl,
-          platform: botInfo.platform
-        }
-      };
+    // Parse the input for the parameter values
+    const tmp = event.methodArn.split(':');
+    const apiGatewayArnTmp = tmp[5].split('/');
+    const awsAccountId = tmp[4];
+    const region = tmp[3];
+    const restApiId = apiGatewayArnTmp[0];
+    const stage = apiGatewayArnTmp[1];
+    const method = apiGatewayArnTmp[2];
+    let resource = '/'; // root resource
+    if (apiGatewayArnTmp[3]) {
+      resource += apiGatewayArnTmp[3];
     }
 
-    // Option 2: Admin Access Token (for admin testing bot functionality)
+    console.log('Bot Auth - Method ARN:', event.methodArn);
+    console.log('Bot Auth - Resource:', resource);
+
+    // Normalize headers to lowercase
+    const normalizedHeaders = Object.fromEntries(
+      Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])
+    );
+
+    const authHeader = normalizedHeaders['authorization'];
+    const botApiKey = normalizedHeaders['x-bot-api-key'] || queryStringParameters['x-bot-api-key'];
+
+    console.log('Bot Auth - checking authentication:', {
+      hasAuthHeader: !!authHeader,
+      hasBotApiKey: !!botApiKey
+    });
+
+    // Option 1: Authorization header (Bearer token for admin testing)
     if (authHeader && authHeader.startsWith('Bearer ')) {
       console.log('Bot Auth - validating admin access token');
       const token = authHeader.split(' ')[1];
@@ -54,28 +83,58 @@ exports.handler = async (event) => {
         const payload = await verifier.verify(token);
         console.log('Bot Auth - valid admin token for user:', payload.sub);
 
-        return {
-          isAuthorized: true,
-          context: {
-            authType: 'admin',
-            userId: payload.sub,
-            email: payload.email,
-            username: payload.username,
-            // For admin testing, we'll let the ask handler determine agentId from request body
-            agentId: null
-          }
+        const authContext = {
+          authType: 'admin',
+          userId: payload.sub,
+          email: payload.email || '',
+          username: payload.username || payload['cognito:username'] || ''
         };
+
+        callback(null, generateAllow(payload.sub, event.methodArn, authContext));
+        return;
       } catch (err) {
         console.log('Bot Auth - invalid admin token:', err.message);
-        return { isAuthorized: false };
+        callback(null, generateDeny('user', event.methodArn));
+        return;
+      }
+    }
+
+    // Option 2: Bot API Key (for external bots like WordPress)
+    if (botApiKey) {
+      console.log('Bot Auth - validating bot API key');
+      try {
+        const botInfo = await validateBotApiKey(botApiKey);
+        if (!botInfo || botInfo.status !== 'active') {
+          console.log('Bot Auth - invalid or inactive bot API key');
+          callback(null, generateDeny('bot', event.methodArn));
+          return;
+        }
+
+        const agentId = botInfo.PK.replace('AGENT#', '');
+        
+        const authContext = {
+          authType: 'bot',
+          botId: botInfo.botId,
+          agentId: agentId,
+          siteUrl: botInfo.siteUrl || '',
+          platform: botInfo.platform || ''
+        };
+
+        console.log('Bot Auth - valid bot API key for agent:', agentId);
+        callback(null, generateAllow(botInfo.botId, event.methodArn, authContext));
+        return;
+      } catch (err) {
+        console.log('Bot Auth - error validating bot API key:', err.message);
+        callback(null, generateDeny('bot', event.methodArn));
+        return;
       }
     }
 
     console.log('Bot Auth - no valid authentication found');
-    return { isAuthorized: false };
+    callback(null, generateDeny('anonymous', event.methodArn));
 
   } catch (e) {
-    console.error('BotAuth error', e);
-    return { isAuthorized: false };
+    console.error('Bot Auth - error:', e);
+    callback(null, generateDeny('error', event.methodArn));
   }
 };

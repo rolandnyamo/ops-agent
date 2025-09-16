@@ -61,13 +61,13 @@ Resources:
             #     - !Ref UserPoolClient
             # IdentitySource: "$request.header.Authorization"
           BotLambdaAuth:
+            FunctionPayloadType: REQUEST
             FunctionArn: !GetAtt BotAuthFn.Arn
             FunctionInvokeRole: !GetAtt BotAuthApiInvokeRole.Arn
             AuthorizerPayloadFormatVersion: 2.0
             Identity:
               Headers:
                 - X-Bot-API-Key
-                - Authorization
         DefaultAuthorizer: AdminCognitoAuth
         AddDefaultAuthorizerToCorsPreflight: false
   UserPool:
