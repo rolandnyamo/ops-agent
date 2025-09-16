@@ -50,8 +50,10 @@ exports.handler = async (event, context, callback) => {
 
   context.callbackWaitsForEmptyEventLoop = false;
 
+  console.log('Event:', JSON.stringify(event));
+
   const method = event?.requestContext?.http?.method || event?.httpMethod || 'GET';
-  const path = event?.requestContext?.http?.path || '';
+  const path = event?.requestContext?.http?.path || event?.requestContext?.path || '';
   const agentIdParam = event?.pathParameters?.agentId;
 
   if (method === 'POST' && path.endsWith('/agents')){

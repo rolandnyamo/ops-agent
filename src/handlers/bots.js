@@ -238,13 +238,6 @@ async function validateBotApiKey(apiKey) {
 exports.handler = async (event, context, callback) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
-  // Handle CORS preflight
-  if ((event.httpMethod || event?.requestContext?.http?.method) === 'OPTIONS') {
-    response.statusCode = 204;
-    response.body = '';
-    return callback(null, response);
-  }
-
   // Handle both API Gateway and local SAM event formats
   const httpMethod = event.httpMethod || event.requestContext?.http?.method;
   const pathParameters = event.pathParameters;

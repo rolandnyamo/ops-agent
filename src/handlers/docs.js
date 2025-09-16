@@ -54,14 +54,8 @@ function makeItem(input){
 exports.handler = async (event, context, callback) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
-  // Handle CORS preflight
-  if ((event.httpMethod || event?.requestContext?.http?.method) === 'OPTIONS') {
-    response.statusCode = 204;
-    response.body = '';
-    return callback(null, response);
-  }
   const method = event?.requestContext?.http?.method || event?.httpMethod || 'GET';
-  const path = event?.requestContext?.http?.path || '';
+  const path = event?.requestContext?.http?.path || event?.requestContext?.path || '';
   const docId = event?.pathParameters?.docId;
 
   if (method === 'GET' && path.endsWith('/docs') && !docId) {

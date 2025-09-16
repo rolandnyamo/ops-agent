@@ -119,13 +119,6 @@ function parseBody(event) {
 exports.handler = async (event, context, callback) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
-  // Handle CORS preflight
-  if ((event.httpMethod || event?.requestContext?.http?.method) === 'OPTIONS') {
-    response.statusCode = 204;
-    response.body = '';
-    return callback(null, response);
-  }
-
   console.log('Event object:', JSON.stringify(event, null, 2));
 
   const method = event.httpMethod || event.requestContext?.http?.method || 'GET';

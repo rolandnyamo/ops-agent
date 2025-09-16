@@ -14,13 +14,6 @@ function parse(event){
 exports.handler = async (event, context, callback) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
-  // Handle CORS preflight
-  if ((event.httpMethod || event?.requestContext?.http?.method) === 'OPTIONS') {
-    response.statusCode = 204;
-    response.body = '';
-    return callback(null, response);
-  }
-
   if (!BUCKET) {
     response.statusCode = 500;
     response.body = JSON.stringify({ message: 'RAW_BUCKET not set' });

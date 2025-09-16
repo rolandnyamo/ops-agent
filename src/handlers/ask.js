@@ -1,5 +1,5 @@
 const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { S3VectorsClient, QueryVectorsCommand, DescribeIndexCommand } = require('@aws-sdk/client-s3vectors');
+const { S3VectorsClient, QueryVectorsCommand, DescribeIndexCommand, GetIndexCommand } = require('@aws-sdk/client-s3vectors');
 const { DynamoDBClient, GetItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { getOpenAIClient } = require('./helpers/openai-client');
@@ -74,7 +74,7 @@ async function queryS3Vectors(vector, topK=5, filter){
   const res = await client.send(new QueryVectorsCommand(params));
   console.log('S3Vectors raw response sample:', JSON.stringify({
     vectorCount: res?.vectors?.length,
-    firstResult: res?.vectors?.[0],
+    // firstResult: res?.vectors?.[0],
     hasMetadata: !!res?.vectors?.[0]?.metadata
   }, null, 2));
 
@@ -107,17 +107,10 @@ async function queryS3Jsonl(vector, topK=5, agentId){
 async function debugS3VectorsIndex() {
   try {
     const client = new S3VectorsClient({});
-    const res = await client.send(new DescribeIndexCommand({
+    const res = await client.send(new GetIndexCommand({
       vectorBucketName: VECTOR_BUCKET,
       indexName: VECTOR_INDEX
     }));
-
-    console.log('S3 Vectors Index Info:', {
-      status: res.indexConfiguration?.status,
-      vectorCount: res.indexStatistics?.vectorCount,
-      dimensions: res.indexConfiguration?.dimensions,
-      created: res.indexConfiguration?.createdAt
-    });
 
     return res;
   } catch (error) {
@@ -154,6 +147,8 @@ async function debugS3BucketContents() {
 
 exports.handler = async (event, context, callback) => {
   context.callbackWaitsForEmptyEventLoop = false;
+
+  console.log(JSON.stringify(event))
 
   // Handle CORS preflight requests
   if (event.requestContext?.http?.method === 'OPTIONS') {
@@ -255,14 +250,14 @@ exports.handler = async (event, context, callback) => {
     }
     appliedFilter = null; // f; // Temporarily disabled for debugging
 
-    console.log('Filter being applied:', JSON.stringify(appliedFilter, null, 2));
-    console.log('Query params:', {
-      vectorBucketName: VECTOR_BUCKET,
-      indexName: VECTOR_INDEX,
-      topK: 5,
-      filter: appliedFilter,
-      vectorLength: vector?.length
-    });
+    // console.log('Filter being applied:', JSON.stringify(appliedFilter, null, 2));
+    // console.log('Query params:', {
+    //   vectorBucketName: VECTOR_BUCKET,
+    //   indexName: VECTOR_INDEX,
+    //   topK: 5,
+    //   filter: appliedFilter,
+    //   vectorLength: vector?.length
+    // });
 
     try {
       const client = new S3VectorsClient({});
@@ -276,15 +271,15 @@ exports.handler = async (event, context, callback) => {
       };
       if (appliedFilter) {params.filter = appliedFilter;}
 
-      console.log('S3Vectors query params:', JSON.stringify(params, null, 2));
+      // console.log('S3Vectors query params:', JSON.stringify(params, null, 2));
       const res = await client.send(new QueryVectorsCommand(params));
       rawSearchResponse = res;
 
-      console.log('Raw S3Vectors response:', JSON.stringify({
-        vectors: res?.vectors?.length || 0,
-        sample: res?.vectors?.slice(0, 2),
-        fullFirstResult: res?.vectors?.[0]
-      }, null, 2));
+      // console.log('Raw S3Vectors response:', JSON.stringify({
+      //   vectors: res?.vectors?.length || 0,
+      //   // sample: res?.vectors?.slice(0, 2),
+      //   fullFirstResult: res?.vectors?.[0]
+      // }, null, 2));
 
       const items = res?.vectors || [];
       results = items.map((r, index) => ({
@@ -394,11 +389,7 @@ Provide a concise, well-formatted answer based on the above context.`;
           hasMetadata: rawSearchResponse.vectors?.[0]?.metadata ? true : false
         } : null
       },
-      indexInfo: indexInfo ? {
-        status: indexInfo.indexConfiguration?.status,
-        vectorCount: indexInfo.indexStatistics?.vectorCount,
-        dimensions: indexInfo.indexConfiguration?.dimensions
-      } : null,
+      indexInfo: indexInfo ? indexInfo.index : null,
       environment: {
         VECTOR_MODE,
         VECTOR_BUCKET,
