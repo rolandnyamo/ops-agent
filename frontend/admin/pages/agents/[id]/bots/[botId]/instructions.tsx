@@ -37,16 +37,16 @@ function BotTester({ botApiKey }: { botApiKey: string }) {
     
     setTesting(true);
     try {
-      // Test using admin authentication (admin testing bot functionality)
+      // Test using bot API key (simulating actual bot behavior)
       const response = await fetch(`${cfg.apiBase}/ask`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(await authHeader()) // Admin bearer token
+          'X-Bot-API-Key': botApiKey // Use bot API key instead of admin token
         },
         body: JSON.stringify({
-          q: testMessage.trim(),
-          agentId: agentId // Required when testing as admin
+          q: testMessage.trim()
+          // agentId not needed since it's identified by the bot API key
         })
       });
 
