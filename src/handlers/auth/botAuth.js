@@ -5,7 +5,7 @@ const { CognitoJwtVerifier } = require('aws-jwt-verify');
 const verifier = CognitoJwtVerifier.create({
   userPoolId: process.env.COGNITO_USER_POOL_ID,
   clientId: process.env.COGNITO_USER_POOL_CLIENT_ID,
-  tokenUse: 'access'
+  tokenUse: 'id'
 });
 
 // Help function to generate an IAM policy
@@ -76,7 +76,7 @@ exports.handler = async (event, context, callback) => {
 
     // Option 1: Authorization header (Bearer token for admin testing)
     if (authHeader && authHeader.startsWith('Bearer ')) {
-      console.log('Bot Auth - validating admin access token');
+      console.log('Bot Auth - validating admin jwt');
       const token = authHeader.split(' ')[1];
 
       try {
