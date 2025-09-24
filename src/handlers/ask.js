@@ -248,7 +248,9 @@ exports.handler = async (event, context, callback) => {
   const embeddingModel = searchCfg.embeddingModel || 'text-embedding-3-small';
   const merged = new Map();
   let rawSearchResponse = null;
-  let appliedFilter = null;
+  // Apply any incoming filter directly (pass-through for S3 Vectors)
+  // Note: filter structure must match S3 Vectors expectations if used.
+  let appliedFilter = filter || null;
   const searchStartTime = Date.now();
   for (let i = 0; i < expansions.length; i++) {
     const qx = expansions[i];
@@ -321,7 +323,7 @@ exports.handler = async (event, context, callback) => {
   const indexInfo = await debugS3VectorsIndex();
   const bucketInfo = await debugS3BucketContents();
 
-  const searchTime = Date.now() - searchStartTime;
+  // searchTime already computed above after merging results
   const confidence = results[0]?.score || 0;
   const grounded = results.length > 0 && confidence >= agentSettings.confidenceThreshold;
   const citations = results.slice(0,3).map(r => ({
