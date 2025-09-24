@@ -4,6 +4,13 @@ const { DynamoDBClient, GetItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { getOpenAIClient } = require('./helpers/openai-client');
 const { generateText } = require('./helpers/openai');
+const {
+  extractNgrams,
+  getActiveSynonymsVersion,
+  batchGetVariantMappings,
+  buildExpansions,
+  applyLexicalBoost,
+} = require('./helpers/synonyms');
 const { response } = require('./helpers/utils');
 
 const VECTOR_MODE = process.env.VECTOR_MODE || 's3vectors';
@@ -46,9 +53,8 @@ Format your response to be easily scannable.`
   };
 }
 
-async function embedQuery(q){
+async function embedQuery(q, model='text-embedding-3-small'){
   const openai = await getOpenAIClient();
-  const model = 'text-embedding-3-small';
   const resp = await openai.embeddings.create({ model, input: q });
   return resp?.data?.[0]?.embedding;
 }
@@ -206,24 +212,103 @@ exports.handler = async (event, context, callback) => {
   // Get agent settings to use confidence threshold and fallback message
   const agentSettings = agentId ? await getAgentSettings(agentId) : {
     confidenceThreshold: 0.45,
-    fallbackMessage: 'I could not find this information in the documentation.'
+    fallbackMessage: 'I could not find this information in the documentation.',
+    search: {
+      queryExpansion: { enabled: false, maxVariants: 3 },
+      lexicalBoost: { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 },
+      embeddingModel: 'text-embedding-3-small'
+    }
   };
 
-  const vector = await embedQuery(q);
-  console.log('Generated vector length:', vector?.length);
-  // console.log('Vector sample:', vector?.slice(0, 5));
+  // Ensure defaults for search settings
+  const searchCfg = agentSettings.search || {};
+  if (!searchCfg.queryExpansion) searchCfg.queryExpansion = { enabled: false, maxVariants: 3 };
+  if (!searchCfg.lexicalBoost) searchCfg.lexicalBoost = { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 };
+  if (!searchCfg.embeddingModel) searchCfg.embeddingModel = 'text-embedding-3-small';
 
-  if (!vector) {
-    response.statusCode = 500;
-    response.body = JSON.stringify({ message: 'Failed to generate embedding vector' });
-    return callback(null, response);
+  // Build query expansions using per-agent synonyms (lookup only grams present in query)
+  let expansions = [q];
+  let synonymDebug = null;
+  try {
+    if (agentId && searchCfg.queryExpansion?.enabled) {
+      const version = await getActiveSynonymsVersion(ddb, SETTINGS_TABLE, agentId);
+      const grams = extractNgrams(q, 3);
+      const matchesMap = await batchGetVariantMappings(ddb, SETTINGS_TABLE, agentId, version, grams);
+      const extra = buildExpansions(q, matchesMap, searchCfg.queryExpansion?.maxVariants || 3);
+      // dedupe while keeping order
+      const seen = new Set();
+      expansions = [q, ...extra].filter((s) => { const key = s.trim(); if (seen.has(key)) return false; seen.add(key); return true; });
+      synonymDebug = { version, gramsTried: grams, matches: matchesMap, expansionsTried: expansions };
+    }
+  } catch (e) {
+    console.warn('Query expansion failed (continuing without):', e.message);
   }
 
-  let results;
-  const searchStartTime = Date.now();
-  let appliedFilter = null;
+  // Embed and retrieve for each expansion; merge results
+  const embeddingModel = searchCfg.embeddingModel || 'text-embedding-3-small';
+  const merged = new Map();
   let rawSearchResponse = null;
+  let appliedFilter = null;
+  const searchStartTime = Date.now();
+  for (let i = 0; i < expansions.length; i++) {
+    const qx = expansions[i];
+    const vector = await embedQuery(qx, embeddingModel);
+    if (!vector) { continue; }
 
+    let resultsForQ = [];
+    if (VECTOR_MODE === 's3vectors') {
+      try {
+        const client = new S3VectorsClient({});
+        const params = {
+          vectorBucketName: VECTOR_BUCKET,
+          indexName: VECTOR_INDEX,
+          queryVector: { float32: vector },
+          topK: 5,
+          returnMetadata: true,
+          includeScores: true
+        };
+        if (appliedFilter) { params.filter = appliedFilter; }
+        const res = await client.send(new QueryVectorsCommand(params));
+        if (i === 0) rawSearchResponse = res; // capture first for debug
+        const items = res?.vectors || [];
+        resultsForQ = items.map((r, index) => ({
+          score: r.distance ?? r.score ?? (0.9 - index * 0.1),
+          metadata: r.metadata,
+          text: r.metadata?.text,
+          _sourceQuery: qx
+        }));
+      } catch (error) {
+        console.error('S3Vectors query failed:', error);
+        throw error;
+      }
+    } else {
+      resultsForQ = await queryS3Jsonl(vector, 5, agentId);
+      resultsForQ = resultsForQ.map((r) => ({ ...r, _sourceQuery: qx }));
+    }
+
+    for (const r of resultsForQ) {
+      const key = `${r.metadata?.title || ''}|${r.metadata?.chunkIdx}|${(r.text || '').slice(0, 50)}`;
+      const prev = merged.get(key);
+      if (!prev || (r.score || 0) > (prev.score || 0)) {
+        merged.set(key, r);
+      }
+    }
+  }
+
+  let results = Array.from(merged.values());
+  const searchTime = Date.now() - searchStartTime;
+
+  // Optionally apply lexical boosts using matched canonicals/variants
+  let boostDebug = null;
+  if (searchCfg.lexicalBoost?.enabled && synonymDebug?.matches) {
+    const termsToBoost = [
+      ...Object.keys(synonymDebug.matches || {}),
+      ...Object.values(synonymDebug.matches || {}).map((m) => m.canonical)
+    ];
+    const boosted = applyLexicalBoost(results, termsToBoost, searchCfg.lexicalBoost?.presenceBoost || 0.12, searchCfg.lexicalBoost?.overlapBoost || 0.05);
+    results = boosted.results;
+    boostDebug = boosted.boosts;
+  }
   // Add comprehensive debugging
   console.log('=== VECTOR SEARCH DEBUG ===');
   console.log('VECTOR_MODE:', VECTOR_MODE);
@@ -235,70 +320,6 @@ exports.handler = async (event, context, callback) => {
   // Debug the index itself
   const indexInfo = await debugS3VectorsIndex();
   const bucketInfo = await debugS3BucketContents();
-
-  if (VECTOR_MODE === 's3vectors') {
-    let f = filter;
-    if (agentId) {
-      // Convert string filter to S3 Vectors object format
-      const agentFilter = { 'agentId': { '$eq': agentId } };
-      if (f) {
-        // If there's an existing filter, combine them with $and
-        f = { '$and': [agentFilter, f] };
-      } else {
-        f = agentFilter;
-      }
-    }
-    appliedFilter = null; // f; // Temporarily disabled for debugging
-
-    // console.log('Filter being applied:', JSON.stringify(appliedFilter, null, 2));
-    // console.log('Query params:', {
-    //   vectorBucketName: VECTOR_BUCKET,
-    //   indexName: VECTOR_INDEX,
-    //   topK: 5,
-    //   filter: appliedFilter,
-    //   vectorLength: vector?.length
-    // });
-
-    try {
-      const client = new S3VectorsClient({});
-      const params = {
-        vectorBucketName: VECTOR_BUCKET,
-        indexName: VECTOR_INDEX,
-        queryVector: { float32: vector },
-        topK: 5,
-        returnMetadata: true,
-        includeScores: true
-      };
-      if (appliedFilter) {params.filter = appliedFilter;}
-
-      // console.log('S3Vectors query params:', JSON.stringify(params, null, 2));
-      const res = await client.send(new QueryVectorsCommand(params));
-      rawSearchResponse = res;
-
-      // console.log('Raw S3Vectors response:', JSON.stringify({
-      //   vectors: res?.vectors?.length || 0,
-      //   // sample: res?.vectors?.slice(0, 2),
-      //   fullFirstResult: res?.vectors?.[0]
-      // }, null, 2));
-
-      const items = res?.vectors || [];
-      results = items.map((r, index) => ({
-        score: r.distance ?? r.score ?? (0.9 - index * 0.1), // Use distance/score if available, otherwise assign based on ranking
-        metadata: r.metadata,
-        text: r.metadata?.text
-      }));
-
-      console.log('Processed results count:', results.length);
-      console.log('First result:', results[0]);
-
-    } catch (error) {
-      console.error('S3Vectors query failed:', error);
-      throw error;
-    }
-  } else {
-    console.log('Using S3 JSONL fallback mode');
-    results = await queryS3Jsonl(vector, 5, agentId);
-  }
 
   const searchTime = Date.now() - searchStartTime;
   const confidence = results[0]?.score || 0;
@@ -382,8 +403,8 @@ Provide a concise, well-formatted answer based on the above context.`;
       vectorSearch: {
         resultsCount: results.length,
         appliedFilter: appliedFilter,
-        vectorLength: vector?.length,
-        vectorSample: vector?.slice(0, 5),
+        vectorLength: undefined,
+        vectorSample: undefined,
         rawSearchResponse: rawSearchResponse ? {
           vectorCount: rawSearchResponse.vectors?.length,
           hasMetadata: rawSearchResponse.vectors?.[0]?.metadata ? true : false
@@ -396,6 +417,8 @@ Provide a concise, well-formatted answer based on the above context.`;
         VECTOR_INDEX,
         region: process.env.AWS_REGION
       },
+      queryExpansion: synonymDebug || null,
+      lexicalBoosts: boostDebug || null,
       rawResults: results.map(r => ({
         score: r.score,
         docId: r.metadata?.docId,
@@ -403,7 +426,8 @@ Provide a concise, well-formatted answer based on the above context.`;
         title: r.metadata?.title,
         textPreview: r.text?.slice(0, 200) + (r.text?.length > 200 ? '...' : ''),
         fullTextLength: r.text?.length,
-        fullMetadata: r.metadata
+        fullMetadata: r.metadata,
+        sourceQuery: r._sourceQuery
       })),
       retrievedChunks: results.map(r => r.text).filter(Boolean),
       confidenceAnalysis: {

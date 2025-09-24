@@ -1,6 +1,6 @@
 const { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
 const { S3VectorsClient, PutVectorsCommand } = require('@aws-sdk/client-s3vectors');
-const { DynamoDBClient, UpdateItemCommand, GetItemCommand } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBClient, UpdateItemCommand, GetItemCommand, PutItemCommand, DeleteItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { response } = require('./helpers/utils');
 
@@ -11,6 +11,7 @@ const VEC_BUCKET = process.env.VECTOR_BUCKET || 'ops-embeddings';
 const VEC_MODE = process.env.VECTOR_MODE || 's3vectors';
 const VEC_INDEX = process.env.VECTOR_INDEX || 'docs';
 const TABLE = process.env.DOCS_TABLE;
+const SETTINGS_TABLE = process.env.SETTINGS_TABLE;
 const { getOpenAIClient } = require('./helpers/openai-client');
 
 function decodeKey(key){ return decodeURIComponent(key.replace(/\+/g,'%20')); }
@@ -148,6 +149,140 @@ async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
   }));
 }
 
+// -------------------- Term Stats + Popularity Materialization --------------------
+const STOPWORDS = new Set([
+  'the','a','an','and','or','of','in','on','for','to','with','by','is','are','was','were','be','as','at','from','that','this','it','its','into','your','you','we','our','their','they','he','she','his','her','not','no','but','if','then','so','can','will','may','do','does','did'
+]);
+
+function normalizeTerm(s){
+  return String(s||'')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s\-]/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function extractDocTerms(chunks, maxUnique=200){
+  const freq = new Map();
+  for (const text of chunks){
+    const norm = normalizeTerm(text);
+    if (!norm) continue;
+    const tokens = norm.split(' ').filter(t => t && t.length >= 3 && !STOPWORDS.has(t));
+    // unigrams
+    for (const t of tokens){
+      freq.set(t, (freq.get(t)||0) + 1);
+    }
+    // bigrams
+    for (let i=0;i<tokens.length-1;i++){
+      const g = `${tokens[i]} ${tokens[i+1]}`;
+      if (g.length>=3) freq.set(g, (freq.get(g)||0) + 1);
+    }
+    // trigrams (lightweight)
+    for (let i=0;i<tokens.length-2;i++){
+      const g = `${tokens[i]} ${tokens[i+1]} ${tokens[i+2]}`;
+      if (g.length>=5) freq.set(g, (freq.get(g)||0) + 1);
+    }
+  }
+  // rank by frequency desc, then length desc
+  const ranked = Array.from(freq.entries()).sort((a,b)=>{
+    const f = b[1]-a[1]; if (f!==0) return f; return b[0].length - a[0].length;
+  });
+  return ranked.slice(0, maxUnique).map(([term,count])=>({term, count}));
+}
+
+function paddedScore(df, titleHits){
+  const score = (Number(df)||0)*1000 + Math.min(Number(titleHits)||0, 999);
+  return String(score).padStart(9,'0');
+}
+
+async function updateAgentTermStats(agentId, docId, chunks, title){
+  if (!SETTINGS_TABLE) return;
+  // Check doc marker to avoid double DF increments
+  let firstTimeDoc = false;
+  try {
+    const mr = await ddb.send(new GetItemCommand({ TableName: SETTINGS_TABLE, Key: marshall({ PK:`AGENT#${agentId}`, SK:`DOCSCAN#${docId}#TERMS#v1` }) }));
+    if (!mr.Item) firstTimeDoc = true;
+  } catch {}
+
+  const terms = extractDocTerms(chunks, 200);
+  const now = new Date().toISOString();
+  const titleNorm = normalizeTerm(title||'');
+
+  for (const {term} of terms){
+    const key = { PK:`AGENT#${agentId}`, SK:`TERM#${term}` };
+    let oldRankPK = null;
+    try {
+      const cur = await ddb.send(new GetItemCommand({ TableName: SETTINGS_TABLE, Key: marshall(key) }));
+      if (cur.Item) {
+        const item = unmarshall(cur.Item);
+        oldRankPK = item.rankPK || null;
+      }
+    } catch {}
+
+    const titleAdd = titleNorm && titleNorm.includes(term) ? 1 : 0;
+    // Update counters
+    const names = { '#u':'updatedAt', '#t':'titleHits' };
+    const values = { ':u': now, ':one': firstTimeDoc ? 1 : 0, ':t': titleAdd };
+    const ue = 'ADD df :one, #t :t SET #u = :u';
+    const upd = await ddb.send(new UpdateItemCommand({
+      TableName: SETTINGS_TABLE,
+      Key: marshall(key),
+      UpdateExpression: ue,
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: marshall(values),
+      ReturnValues: 'ALL_NEW'
+    }));
+
+    const updated = unmarshall(upd.Attributes || {});
+    const df = Number(updated.df)||0;
+    const th = Number(updated.titleHits)||0;
+    const newPad = paddedScore(df, th);
+    const newRankPK = `RANK#${newPad}#${term}`;
+
+    // If rank changed, swap rank items
+    if (oldRankPK && oldRankPK !== newRankPK) {
+      try {
+        await ddb.send(new DeleteItemCommand({ TableName: SETTINGS_TABLE, Key: marshall({ PK: oldRankPK, SK: `POPULAR#AGENT#${agentId}` }) }));
+      } catch {}
+    }
+    if (!oldRankPK || oldRankPK !== newRankPK) {
+      try {
+        await ddb.send(new PutItemCommand({
+          TableName: SETTINGS_TABLE,
+          Item: marshall({
+            PK: newRankPK,
+            SK: `POPULAR#AGENT#${agentId}`,
+            term,
+            df,
+            titleHits: th,
+            score: Number(df)*1000 + Math.min(th,999),
+            updatedAt: now
+          })
+        }));
+      } catch (e) { console.warn('Put rank item failed', e.message); }
+
+      try {
+        await ddb.send(new UpdateItemCommand({
+          TableName: SETTINGS_TABLE,
+          Key: marshall(key),
+          UpdateExpression: 'SET rankPK = :r',
+          ExpressionAttributeValues: marshall({ ':r': newRankPK })
+        }));
+      } catch {}
+    }
+  }
+
+  // Write doc marker if first time
+  if (firstTimeDoc) {
+    try {
+      await ddb.send(new PutItemCommand({
+        TableName: SETTINGS_TABLE,
+        Item: marshall({ PK:`AGENT#${agentId}`, SK:`DOCSCAN#${docId}#TERMS#v1`, termsHash: 'v1', processedAt: now })
+      }));
+    } catch {}
+  }
+}
+
 exports.handler = async (event, context, callback) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
@@ -207,6 +342,15 @@ exports.handler = async (event, context, callback) => {
       await storeVectorsS3(docId, vectors, chunks, docMeta);
     } else {
       console.log('Unknown VECTOR_MODE:', VEC_MODE);
+    }
+
+    // Update term stats for popular term extraction (guarded)
+    try {
+      if (process.env.ENABLE_TERM_STATS === 'true') {
+        await updateAgentTermStats(agentId, docId, chunks, docMeta?.title || '');
+      }
+    } catch (e) {
+      console.warn('Term stats update failed (continuing):', e.message);
     }
 
     await setStatus(docId, agentId, 'READY', { numChunks: chunks.length });
