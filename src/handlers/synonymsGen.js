@@ -1,6 +1,7 @@
 const { DynamoDBClient, QueryCommand, GetItemCommand, PutItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { getOpenAIClient } = require('./helpers/openai-client');
+const { response } = require('./helpers/utils');
 
 const TABLE = process.env.SETTINGS_TABLE;
 const ddb = new DynamoDBClient({});
@@ -123,13 +124,29 @@ async function publish(agentId, groups){
   return version;
 }
 
-exports.handler = async (event) => {
-  // Triggered by EventBridge or HTTP with agentId.
-  const agentId = event?.detail?.agentId || event?.agentId || event?.pathParameters?.agentId || event?.queryStringParameters?.agentId;
-  if (!agentId) {
-    return { statusCode: 400, body: JSON.stringify({ message: 'agentId is required' }) };
+exports.handler = async (event, context, callback) => {
+  context.callbackWaitsForEmptyEventLoop = false;
+  const method = event?.httpMethod || event?.requestContext?.http?.method;
+
+  // Handle CORS preflight for HTTP calls
+  if (method === 'OPTIONS') {
+    response.statusCode = 204;
+    response.body = '';
+    return callback(null, response);
   }
+
   try {
+    // Triggered by EventBridge or HTTP with agentId.
+    const agentId = event?.detail?.agentId || event?.agentId || event?.pathParameters?.agentId || event?.queryStringParameters?.agentId;
+    if (!agentId) {
+      if (method) {
+        response.statusCode = 400;
+        response.body = JSON.stringify({ message: 'agentId is required' });
+        return callback(null, response);
+      }
+      return { statusCode: 400, body: JSON.stringify({ message: 'agentId is required' }) };
+    }
+
     const terms = await fetchTopTerms(agentId, 200);
     const groups = buildGroups(terms);
     const settings = await getAgentSettings(agentId);
@@ -137,14 +154,28 @@ exports.handler = async (event) => {
 
     if (autoApprove) {
       const version = await publish(agentId, groups);
+      if (method) {
+        response.statusCode = 200;
+        response.body = JSON.stringify({ success: true, published: true, version, groupsCount: groups.length });
+        return callback(null, response);
+      }
       return { statusCode: 200, body: JSON.stringify({ success: true, published: true, version, groupsCount: groups.length }) };
     } else {
       const version = await writeDraft(agentId, groups);
+      if (method) {
+        response.statusCode = 200;
+        response.body = JSON.stringify({ success: true, published: false, version, groupsCount: groups.length });
+        return callback(null, response);
+      }
       return { statusCode: 200, body: JSON.stringify({ success: true, published: false, version, groupsCount: groups.length }) };
     }
   } catch (e) {
     console.error('synonymsGen error', e);
+    if (event?.httpMethod || event?.requestContext?.http?.method) {
+      response.statusCode = 500;
+      response.body = JSON.stringify({ message: 'generation failed', error: e.message });
+      return callback(null, response);
+    }
     return { statusCode: 500, body: JSON.stringify({ message: 'generation failed', error: e.message }) };
   }
 };
-
