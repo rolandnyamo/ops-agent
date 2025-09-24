@@ -13,6 +13,7 @@ const VEC_INDEX = process.env.VECTOR_INDEX || 'docs';
 const TABLE = process.env.DOCS_TABLE;
 const SETTINGS_TABLE = process.env.SETTINGS_TABLE;
 const { getOpenAIClient } = require('./helpers/openai-client');
+const { EventBridgeClient, PutEventsCommand } = require('@aws-sdk/client-eventbridge');
 
 function decodeKey(key){ return decodeURIComponent(key.replace(/\+/g,'%20')); }
 function textFromHtml(html){ return String(html).replace(/<script[\s\S]*?<\/script>/gi,'').replace(/<style[\s\S]*?<\/style>/gi,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(); }
@@ -354,6 +355,20 @@ exports.handler = async (event, context, callback) => {
     }
 
     await setStatus(docId, agentId, 'READY', { numChunks: chunks.length });
+
+    // Emit an async event to generate/update synonyms for this agent
+    try {
+      const eb = new EventBridgeClient({});
+      await eb.send(new PutEventsCommand({
+        Entries: [{
+          Source: 'ops-agent',
+          DetailType: 'SynonymsRequested',
+          Detail: JSON.stringify({ agentId, reason: 'doc_ingested', docId })
+        }]
+      }));
+    } catch (e) {
+      console.warn('Failed to emit synonyms event:', e.message);
+    }
     response.statusCode = 200;
     response.body = JSON.stringify({ message: 'Processing completed', docId, chunks: chunks.length });
     return callback(null, response);

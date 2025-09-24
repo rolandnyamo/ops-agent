@@ -26,6 +26,13 @@ Format your response to be easily scannable.`,
     notes: '',
     allowedOrigins: [],
     notifyEmails: [],
+    // Search-related defaults including synonyms behavior
+    search: {
+      queryExpansion: { enabled: false, maxVariants: 3 },
+      lexicalBoost: { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 },
+      embeddingModel: 'text-embedding-3-small',
+      synonyms: { autoApprove: false }
+    },
     updatedAt: new Date().toISOString()
   };
 }
@@ -48,6 +55,28 @@ function validate(input){
   if (typeof input.notes === 'string') {out.notes = input.notes;}
   if (Array.isArray(input.allowedOrigins)) {out.allowedOrigins = input.allowedOrigins.filter(x => typeof x === 'string');}
   if (Array.isArray(input.notifyEmails)) {out.notifyEmails = input.notifyEmails.filter(x => typeof x === 'string');}
+
+  // Optional nested search config
+  if (input.search && typeof input.search === 'object') {
+    out.search = {};
+    const s = input.search;
+    if (s.queryExpansion && typeof s.queryExpansion === 'object') {
+      out.search.queryExpansion = {};
+      if (typeof s.queryExpansion.enabled === 'boolean') out.search.queryExpansion.enabled = s.queryExpansion.enabled;
+      if (typeof s.queryExpansion.maxVariants === 'number') out.search.queryExpansion.maxVariants = s.queryExpansion.maxVariants;
+    }
+    if (s.lexicalBoost && typeof s.lexicalBoost === 'object') {
+      out.search.lexicalBoost = {};
+      if (typeof s.lexicalBoost.enabled === 'boolean') out.search.lexicalBoost.enabled = s.lexicalBoost.enabled;
+      if (typeof s.lexicalBoost.presenceBoost === 'number') out.search.lexicalBoost.presenceBoost = s.lexicalBoost.presenceBoost;
+      if (typeof s.lexicalBoost.overlapBoost === 'number') out.search.lexicalBoost.overlapBoost = s.lexicalBoost.overlapBoost;
+    }
+    if (typeof s.embeddingModel === 'string') out.search.embeddingModel = s.embeddingModel;
+    if (s.synonyms && typeof s.synonyms === 'object') {
+      out.search.synonyms = {};
+      if (typeof s.synonyms.autoApprove === 'boolean') out.search.synonyms.autoApprove = s.synonyms.autoApprove;
+    }
+  }
   return out;
 }
 

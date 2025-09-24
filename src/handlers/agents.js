@@ -65,7 +65,7 @@ exports.handler = async (event, context, callback) => {
     if (useCase){
       const inf = await inferSettings(useCase);
       if (inf){
-        const settings = { PK: `AGENT#${agentId}`, SK: 'SETTINGS#V1', data: { agentName: inf.agentName || 'Agent', confidenceThreshold: inf.confidenceThreshold ?? 0.45, fallbackMessage: inf.fallbackMessage || 'Sorry, I could not find this in the documentation.', organizationType: inf.organizationType || '', categories: inf.categories || [], audiences: inf.audiences || ['All'], notes: inf.notes || '', allowedOrigins: [], notifyEmails: [], updatedAt: new Date().toISOString() } };
+        const settings = { PK: `AGENT#${agentId}`, SK: 'SETTINGS#V1', data: { agentName: inf.agentName || 'Agent', confidenceThreshold: inf.confidenceThreshold ?? 0.45, fallbackMessage: inf.fallbackMessage || 'Sorry, I could not find this in the documentation.', organizationType: inf.organizationType || '', categories: inf.categories || [], audiences: inf.audiences || ['All'], notes: inf.notes || '', allowedOrigins: [], notifyEmails: [], search: { queryExpansion: { enabled: false, maxVariants: 3 }, lexicalBoost: { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 }, embeddingModel: 'text-embedding-3-small', synonyms: { autoApprove: false } }, updatedAt: new Date().toISOString() } };
         await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(settings) }));
       }
     }
@@ -90,6 +90,80 @@ exports.handler = async (event, context, callback) => {
     const resObj = res.Item ? unmarshall(res.Item).data : {};
 
     response.body = JSON.stringify({ ...resObj });
+    response.statusCode = 200;
+    return callback(null, response);
+  }
+
+  // ---- Synonyms draft endpoints ----
+  if (method === 'GET' && path.endsWith(`/agents/${agentIdParam}/synonyms/draft`)) {
+    const key = { PK: `AGENT#${agentIdParam}`, SK: 'SYNONYMS#DRAFT' };
+    const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall(key) }));
+    const data = res.Item ? unmarshall(res.Item).data : null;
+    response.body = JSON.stringify({ draft: data });
+    response.statusCode = 200;
+    return callback(null, response);
+  }
+
+  if (method === 'PUT' && path.endsWith(`/agents/${agentIdParam}/synonyms/draft`)) {
+    const body = parse(event);
+    const groups = Array.isArray(body?.groups) ? body.groups : [];
+    const version = body?.version || `draft-${Date.now()}`;
+    const now = new Date().toISOString();
+    const item = { PK: `AGENT#${agentIdParam}`, SK: 'SYNONYMS#DRAFT', data: { version, groups, updatedAt: now } };
+    await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(item) }));
+    response.body = JSON.stringify({ success: true, draft: item.data });
+    response.statusCode = 200;
+    return callback(null, response);
+  }
+
+  if (method === 'POST' && path.endsWith(`/agents/${agentIdParam}/synonyms/publish`)) {
+    // Promote current draft to an active version
+    const { PutItemCommand, BatchWriteItemCommand } = require('@aws-sdk/client-dynamodb');
+    const { GetItemCommand: GetIt } = require('@aws-sdk/client-dynamodb');
+    const draftKey = { PK: `AGENT#${agentIdParam}`, SK: 'SYNONYMS#DRAFT' };
+    const dres = await ddb.send(new GetIt({ TableName: TABLE, Key: marshall(draftKey) }));
+    const draft = dres.Item ? unmarshall(dres.Item).data : null;
+    if (!draft || !Array.isArray(draft.groups) || draft.groups.length === 0) {
+      response.statusCode = 400;
+      response.body = JSON.stringify({ message: 'No draft to publish' });
+      return callback(null, response);
+    }
+    const version = String(Date.now());
+    const now = new Date().toISOString();
+
+    // Write groups and variants
+    for (let i = 0; i < draft.groups.length; i++) {
+      const g = draft.groups[i];
+      const groupId = g.groupId || String(i + 1).padStart(4, '0');
+      const groupItem = {
+        PK: `AGENT#${agentIdParam}`,
+        SK: `SYNONYMS#v${version}#GROUP#${groupId}`,
+        canonical: g.canonical,
+        variants: g.variants || [],
+        weight: g.weight || 1,
+        updatedAt: now
+      };
+      await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(groupItem) }));
+      for (const v of (g.variants || [])) {
+        const norm = String(v || '').toLowerCase().trim().replace(/\s+/g, ' ');
+        if (!norm) continue;
+        const varItem = {
+          PK: `AGENT#${agentIdParam}`,
+          SK: `SYNVAR#v${version}#${norm}`,
+          canonical: g.canonical,
+          groupId,
+          weight: g.weight || 1,
+          updatedAt: now
+        };
+        await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(varItem) }));
+      }
+    }
+
+    // Activate
+    const active = { PK: `AGENT#${agentIdParam}`, SK: 'SYNONYMS#ACTIVE', version: String(version), createdAt: now };
+    await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(active) }));
+
+    response.body = JSON.stringify({ success: true, version });
     response.statusCode = 200;
     return callback(null, response);
   }

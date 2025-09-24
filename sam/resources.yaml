@@ -281,6 +281,12 @@ Resources:
                 - ssm:GetParameter
               Resource:
                 - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/openai/key"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource:
+                - "*"
 
   S3PutRule:
     Type: AWS::Events::Rule
@@ -306,6 +312,46 @@ Resources:
       FunctionName: !Ref IngestionWorkerFn
       Principal: events.amazonaws.com
       SourceArn: !GetAtt S3PutRule.Arn
+
+  SynonymsGenFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-synonyms-gen"
+      CodeUri: ../src
+      Handler: handlers/synonymsGen.handler
+      Timeout: 20
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource: "*"
+      Events:
+        HttpTrigger: # optional manual trigger
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /agents/{agentId}/synonyms/generate
+            Method: POST
+
+  SynonymsEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-${Stage}-synonyms-requested"
+      EventPattern:
+        source: ["ops-agent"]
+        detail-type: ["SynonymsRequested"]
+      Targets:
+        - Arn: !GetAtt SynonymsGenFn.Arn
+          Id: SynonymsGenTarget
+
+  SynonymsGenPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref SynonymsGenFn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SynonymsEventRule.Arn
 
   DocsFn:
     Type: AWS::Serverless::Function
@@ -444,6 +490,24 @@ Resources:
             RestApiId: !Ref Api
             Path: /agents/{agentId}
             Method: DELETE
+        GetSynonymsDraft:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /agents/{agentId}/synonyms/draft
+            Method: GET
+        PutSynonymsDraft:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /agents/{agentId}/synonyms/draft
+            Method: PUT
+        PublishSynonyms:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /agents/{agentId}/synonyms/publish
+            Method: POST
             
   BotsFn:
     Type: AWS::Serverless::Function
@@ -619,4 +683,3 @@ Outputs:
     Value: !Ref UserPool
   UserPoolClientId:
     Value: !Ref UserPoolClient
-
