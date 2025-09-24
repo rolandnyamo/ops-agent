@@ -19,6 +19,12 @@ export type Settings = {
   allowedOrigins: string[];
   notifyEmails: string[];
   updatedAt?: string;
+  search?: {
+    queryExpansion?: { enabled?: boolean; maxVariants?: number };
+    lexicalBoost?: { enabled?: boolean; presenceBoost?: number; overlapBoost?: number };
+    embeddingModel?: string;
+    synonyms?: { autoApprove?: boolean };
+  };
 };
 
 export async function getSettings(agentId?: string): Promise<Settings> {
@@ -162,6 +168,45 @@ export async function deleteAgent(agentId: string){
   });
   if (!res.ok) throw new Error(`delete agent ${res.status}`);
   return res.json() as Promise<{ success: boolean }>;
+}
+
+// Synonyms API
+export type SynonymGroup = { canonical: string; variants: string[]; weight?: number; groupId?: string };
+
+export async function getSynonymsDraft(agentId: string): Promise<{ draft: { version: string; groups: SynonymGroup[]; updatedAt?: string } | null }>{
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}/synonyms/draft`, {
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`GET synonyms draft ${res.status}`);
+  return res.json();
+}
+
+export async function putSynonymsDraft(agentId: string, groups: SynonymGroup[], version?: string){
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}/synonyms/draft`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ groups, version })
+  });
+  if (!res.ok) throw new Error(`PUT synonyms draft ${res.status}`);
+  return res.json() as Promise<{ success: boolean }>;
+}
+
+export async function publishSynonyms(agentId: string){
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}/synonyms/publish`, {
+    method: 'POST',
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`POST synonyms publish ${res.status}`);
+  return res.json() as Promise<{ success: boolean; version: string }>;
+}
+
+export async function generateSynonyms(agentId: string){
+  const res = await fetch(`${cfg.apiBase}/agents/${encodeURIComponent(agentId)}/synonyms/generate`, {
+    method: 'POST',
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`POST synonyms generate ${res.status}`);
+  return res.json() as Promise<{ success: boolean; published?: boolean; version?: string; groupsCount?: number }>;
 }
 
 // User Management API

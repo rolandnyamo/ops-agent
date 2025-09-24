@@ -255,7 +255,7 @@ Resources:
       MemorySize: 1024
       Environment:
         Variables:
-          var1: value1
+          ENABLE_TERM_STATS: 'true'
       Policies:
         - Statement:
             - Effect: Allow
