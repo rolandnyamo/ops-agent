@@ -1,4 +1,5 @@
 const { DynamoDBClient, PutItemCommand, GetItemCommand, QueryCommand, DeleteItemCommand } = require('@aws-sdk/client-dynamodb');
+const { S3VectorsClient, CreateIndexCommand, DeleteIndexCommand } = require('@aws-sdk/client-s3vectors');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const crypto = require('node:crypto');
 const { z } = require('zod');
@@ -6,7 +7,10 @@ const { generateJSON } = require('./helpers/openai');
 const { response } = require('./helpers/utils');
 
 const ddb = new DynamoDBClient({});
+const s3v = new S3VectorsClient({});
 const TABLE = process.env.SETTINGS_TABLE;
+const VECTOR_BUCKET = process.env.VECTOR_BUCKET;
+const VECTOR_DIMENSION = Number(process.env.VECTOR_DIMENSION || 1536);
 
 const SettingsEvent = z.object({
   agentName: z.string().default('My Agent'),
@@ -19,6 +23,38 @@ const SettingsEvent = z.object({
 });
 
 function parse(event){ try { return event?.body ? (typeof event.body==='string'?JSON.parse(event.body):event.body) : {}; } catch { return {}; } }
+
+async function ensureAgentVectorIndex(agentId) {
+  if (!VECTOR_BUCKET || !agentId) return null;
+  try {
+    await s3v.send(new CreateIndexCommand({
+      vectorBucketName: VECTOR_BUCKET,
+      indexName: agentId,
+      vectorDimension: VECTOR_DIMENSION,
+      vectorType: 'float32'
+    }));
+    return agentId;
+  } catch (error) {
+    const status = error?.$metadata?.httpStatusCode;
+    if (status === 409 || error?.name === 'ConflictException') {
+      return agentId;
+    }
+    console.warn('Failed to ensure agent vector index:', error?.message || error);
+    return agentId;
+  }
+}
+
+async function deleteAgentVectorIndex(agentId) {
+  if (!VECTOR_BUCKET || !agentId) return;
+  try {
+    await s3v.send(new DeleteIndexCommand({ vectorBucketName: VECTOR_BUCKET, indexName: agentId }));
+  } catch (error) {
+    const status = error?.$metadata?.httpStatusCode;
+    if (status && status !== 404) {
+      console.warn('Failed to delete agent vector index:', error?.message || error);
+    }
+  }
+}
 
 async function inferSettings(useCase){
   if (!useCase) {return null;}
@@ -62,13 +98,35 @@ exports.handler = async (event, context, callback) => {
     const agentId = crypto.randomUUID().slice(0,8);
     const info = { PK: `AGENT#${agentId}`, SK: 'AGENT', data: { agentId, createdAt: new Date().toISOString() } };
     await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(info) }));
-    if (useCase){
-      const inf = await inferSettings(useCase);
-      if (inf){
-        const settings = { PK: `AGENT#${agentId}`, SK: 'SETTINGS#V1', data: { agentName: inf.agentName || 'Agent', confidenceThreshold: inf.confidenceThreshold ?? 0.45, fallbackMessage: inf.fallbackMessage || 'Sorry, I could not find this in the documentation.', organizationType: inf.organizationType || '', categories: inf.categories || [], audiences: inf.audiences || ['All'], notes: inf.notes || '', allowedOrigins: [], notifyEmails: [], search: { queryExpansion: { enabled: false, maxVariants: 3 }, lexicalBoost: { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 }, embeddingModel: 'text-embedding-3-small', synonyms: { autoApprove: false } }, updatedAt: new Date().toISOString() } };
-        await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(settings) }));
-      }
+    await ensureAgentVectorIndex(agentId);
+
+    const inferred = useCase ? await inferSettings(useCase) : null;
+    const nowIso = new Date().toISOString();
+    const baseSearch = {
+      queryExpansion: { enabled: false, maxVariants: 3 },
+      lexicalBoost: { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 },
+      embeddingModel: 'text-embedding-3-small',
+      synonyms: { autoApprove: false },
+      vectorIndex: agentId
+    };
+    const baseSettings = {
+      agentName: inferred?.agentName || 'Agent',
+      confidenceThreshold: inferred?.confidenceThreshold ?? 0.45,
+      fallbackMessage: inferred?.fallbackMessage || 'Sorry, I could not find this in the documentation.',
+      organizationType: inferred?.organizationType || '',
+      categories: inferred?.categories || [],
+      audiences: inferred?.audiences || ['All'],
+      notes: inferred?.notes || '',
+      allowedOrigins: [],
+      notifyEmails: [],
+      search: { ...baseSearch, ...(inferred?.search || {}) },
+      updatedAt: nowIso
+    };
+    if (!baseSettings.search.vectorIndex) {
+      baseSettings.search.vectorIndex = agentId;
     }
+    const settings = { PK: `AGENT#${agentId}`, SK: 'SETTINGS#V1', data: baseSettings };
+    await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(settings) }));
 
     response.body = JSON.stringify({ agentId });
     response.statusCode = 201;
@@ -87,7 +145,11 @@ exports.handler = async (event, context, callback) => {
   if (method === 'GET' && agentIdParam){
     const key = { PK: `AGENT#${agentIdParam}`, SK: 'SETTINGS#V1' };
     const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall(key) }));
-    const resObj = res.Item ? unmarshall(res.Item).data : {};
+    const raw = res.Item ? unmarshall(res.Item).data : null;
+    const resObj = raw || {};
+    if (resObj.search && !resObj.search.vectorIndex) {
+      resObj.search.vectorIndex = agentIdParam;
+    }
 
     response.body = JSON.stringify({ ...resObj });
     response.statusCode = 200;
@@ -170,6 +232,7 @@ exports.handler = async (event, context, callback) => {
 
   if (method === 'DELETE' && agentIdParam) {
     try {
+      await deleteAgentVectorIndex(agentIdParam);
       // Delete agent settings
       await ddb.send(new DeleteItemCommand({
         TableName: TABLE,

@@ -41,6 +41,7 @@ Globals:
         VECTOR_BUCKET: 'ops-embeddings'  # This will be overridden by the actual import value in the function definition
         VECTOR_INDEX: 'docs'  # This will be overridden by the actual import value in the function definition
         VECTOR_MODE: s3vectors
+        VECTOR_DIMENSION: '1536'
 
 Resources:
   Api:
@@ -273,6 +274,7 @@ Resources:
                 - s3:DeleteObject
                 - s3:ListBucket
                 - s3vectors:PutVectors
+                - s3vectors:CreateIndex
               Resource:
                 - "*"
         - Statement:
@@ -465,6 +467,13 @@ Resources:
                 - ssm:GetParameter
               Resource:
                 - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/openai/key"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3vectors:CreateIndex
+                - s3vectors:DeleteIndex
+              Resource:
+                - "*"
       Events:
         CreateAgent:
           Type: Api

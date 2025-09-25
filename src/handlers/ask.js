@@ -29,7 +29,11 @@ async function getAgentSettings(agentId) {
 
     if (res.Item) {
       const item = unmarshall(res.Item);
-      return item.data || item; // data might be nested
+      const data = item.data || item;
+      if (agentId && data?.search && !data.search.vectorIndex) {
+        data.search.vectorIndex = agentId;
+      }
+      return data; // data might be nested
     }
   } catch (error) {
     console.warn('Could not fetch agent settings:', error.message);
@@ -65,11 +69,11 @@ function cosine(a, b){
   return dot / (Math.sqrt(a2) * Math.sqrt(b2) + 1e-8);
 }
 
-async function queryS3Vectors(vector, topK=5, filter){
+async function queryS3Vectors(vector, topK=5, filter, indexName){
   const client = new S3VectorsClient({});
   const params = {
     vectorBucketName: VECTOR_BUCKET,
-    indexName: VECTOR_INDEX,
+    indexName: indexName || VECTOR_INDEX,
     queryVector: { float32: vector },
     topK,
     returnMetadata: true  // This is the key parameter to get metadata!
@@ -110,12 +114,12 @@ async function queryS3Jsonl(vector, topK=5, agentId){
   return scored.slice(0, topK).map(r => ({ score: r.score, metadata: r, text: r.text }));
 }
 
-async function debugS3VectorsIndex() {
+async function debugS3VectorsIndex(indexName) {
   try {
     const client = new S3VectorsClient({});
     const res = await client.send(new GetIndexCommand({
       vectorBucketName: VECTOR_BUCKET,
-      indexName: VECTOR_INDEX
+      indexName: indexName || VECTOR_INDEX
     }));
 
     return res;
@@ -225,6 +229,7 @@ exports.handler = async (event, context, callback) => {
   if (!searchCfg.queryExpansion) searchCfg.queryExpansion = { enabled: false, maxVariants: 3 };
   if (!searchCfg.lexicalBoost) searchCfg.lexicalBoost = { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 };
   if (!searchCfg.embeddingModel) searchCfg.embeddingModel = 'text-embedding-3-small';
+  if (agentId && !searchCfg.vectorIndex) searchCfg.vectorIndex = agentId;
 
   // Build query expansions using per-agent synonyms (lookup only grams present in query)
   let expansions = [q];
@@ -250,7 +255,12 @@ exports.handler = async (event, context, callback) => {
   let rawSearchResponse = null;
   // Apply any incoming filter directly (pass-through for S3 Vectors)
   // Note: filter structure must match S3 Vectors expectations if used.
+  const vectorIndexName = searchCfg.vectorIndex || VECTOR_INDEX;
   let appliedFilter = filter || null;
+  if (agentId && VECTOR_MODE === 's3vectors') {
+    const agentFilter = `agentId = \"${String(agentId).replace(/"/g, '\\"')}\"`;
+    appliedFilter = appliedFilter ? `(${agentFilter}) AND (${appliedFilter})` : agentFilter;
+  }
   const searchStartTime = Date.now();
   for (let i = 0; i < expansions.length; i++) {
     const qx = expansions[i];
@@ -263,7 +273,7 @@ exports.handler = async (event, context, callback) => {
         const client = new S3VectorsClient({});
         const params = {
           vectorBucketName: VECTOR_BUCKET,
-          indexName: VECTOR_INDEX,
+          indexName: vectorIndexName,
           queryVector: { float32: vector },
           topK: 5,
           returnMetadata: true,
@@ -315,12 +325,12 @@ exports.handler = async (event, context, callback) => {
   console.log('=== VECTOR SEARCH DEBUG ===');
   console.log('VECTOR_MODE:', VECTOR_MODE);
   console.log('VECTOR_BUCKET:', VECTOR_BUCKET);
-  console.log('VECTOR_INDEX:', VECTOR_INDEX);
+  console.log('VECTOR_INDEX:', vectorIndexName);
   console.log('AgentId:', agentId);
   console.log('Original filter:', filter);
 
   // Debug the index itself
-  const indexInfo = await debugS3VectorsIndex();
+  const indexInfo = await debugS3VectorsIndex(vectorIndexName);
   const bucketInfo = await debugS3BucketContents();
 
   // searchTime already computed above after merging results

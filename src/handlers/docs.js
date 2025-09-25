@@ -11,6 +11,7 @@ const BUCKET = process.env.RAW_BUCKET;
 const VEC_BUCKET = process.env.VECTOR_BUCKET;
 const VEC_INDEX = process.env.VECTOR_INDEX || 'docs';
 const VEC_MODE = process.env.VECTOR_MODE || 's3vectors';
+const SETTINGS_TABLE = process.env.SETTINGS_TABLE;
 
 function ok(status, body, callback) {
   response.statusCode = status;
@@ -23,6 +24,25 @@ function parseBody(event){
   catch { return {}; }
 }
 function now(){ return new Date().toISOString(); }
+
+async function getAgentVectorIndex(agentId){
+  if (!SETTINGS_TABLE || !agentId) return agentId || VEC_INDEX;
+  try {
+    const res = await ddb.send(new GetItemCommand({
+      TableName: SETTINGS_TABLE,
+      Key: marshall({ PK:`AGENT#${agentId}`, SK:'SETTINGS#V1' })
+    }));
+    if (res.Item) {
+      const item = unmarshall(res.Item);
+      const data = item.data || item;
+      const configured = data?.search?.vectorIndex;
+      if (configured) {return configured;}
+    }
+  } catch (error) {
+    console.warn('getAgentVectorIndex (docs) failed:', error?.message || error);
+  }
+  return agentId || VEC_INDEX;
+}
 
 function makeItem(input){
   const docId = input.docId;
@@ -133,7 +153,14 @@ exports.handler = async (event, context, callback) => {
     if (VEC_MODE === 's3vectors' && VEC_BUCKET) {
       const cli = new S3VectorsClient({});
       try {
-        await cli.send(new DeleteVectorsCommand({ bucket: VEC_BUCKET, index: VEC_INDEX, filter: `docId = \"${docId}\" AND agentId = \"${agentId}\"` }));
+        const indexName = await getAgentVectorIndex(agentId);
+        const safeDoc = String(docId).replace(/"/g, '\\"');
+        const safeAgent = String(agentId).replace(/"/g, '\\"');
+        await cli.send(new DeleteVectorsCommand({
+          vectorBucketName: VEC_BUCKET,
+          indexName,
+          filter: `docId = \"${safeDoc}\" AND agentId = \"${safeAgent}\"`
+        }));
       } catch (e) { console.log('DeleteVectors error (ignored):', e?.message || e); }
     }
     await ddb.send(new DeleteItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }) }));

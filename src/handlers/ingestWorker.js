@@ -1,5 +1,5 @@
 const { S3Client, GetObjectCommand, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
-const { S3VectorsClient, PutVectorsCommand } = require('@aws-sdk/client-s3vectors');
+const { S3VectorsClient, PutVectorsCommand, CreateIndexCommand } = require('@aws-sdk/client-s3vectors');
 const { DynamoDBClient, UpdateItemCommand, GetItemCommand, PutItemCommand, DeleteItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { response } = require('./helpers/utils');
@@ -10,10 +10,12 @@ const RAW_BUCKET = process.env.RAW_BUCKET;
 const VEC_BUCKET = process.env.VECTOR_BUCKET || 'ops-embeddings';
 const VEC_MODE = process.env.VECTOR_MODE || 's3vectors';
 const VEC_INDEX = process.env.VECTOR_INDEX || 'docs';
+const VEC_DIMENSION = Number(process.env.VECTOR_DIMENSION || 1536);
 const TABLE = process.env.DOCS_TABLE;
 const SETTINGS_TABLE = process.env.SETTINGS_TABLE;
 const { getOpenAIClient } = require('./helpers/openai-client');
 const { EventBridgeClient, PutEventsCommand } = require('@aws-sdk/client-eventbridge');
+const s3vectors = new S3VectorsClient({});
 
 function decodeKey(key){ return decodeURIComponent(key.replace(/\+/g,'%20')); }
 function textFromHtml(html){ return String(html).replace(/<script[\s\S]*?<\/script>/gi,'').replace(/<style[\s\S]*?<\/style>/gi,'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(); }
@@ -95,15 +97,15 @@ function truncateTextForMetadata(text, docMeta, maxFilterableSize = 1800) { // L
   return truncated;
 }
 
-async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
+async function storeVectorsS3Vectors(agentId, indexName, docId, vectors, chunks, docMeta){
   if (!VEC_BUCKET) {throw new Error('VECTOR_BUCKET not set');}
-  if (!VEC_INDEX) {throw new Error('VECTOR_INDEX not set');}
-  const client = new S3VectorsClient({});
+  const targetIndex = indexName || VEC_INDEX;
+  if (!targetIndex) {throw new Error('VECTOR_INDEX not set');}
   const items = vectors.map((vector, i) => {
     const truncatedText = truncateTextForMetadata(chunks[i], docMeta);
 
     return {
-      key: `${docId}_chunk_${i}`, // Required unique identifier
+      key: `${agentId}_${docId}_chunk_${i}`,
       data: {
         float32: vector // AWS S3 Vectors requires data.float32 format
       },
@@ -114,7 +116,8 @@ async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
         audience: docMeta?.audience || '',
         chunkIdx: i,
         text: truncatedText,
-        agentId: docMeta?.agentId || 'default'
+        agentId: agentId || docMeta?.agentId || 'default',
+        docId
 
         // Unfilterable metadata - stored but not indexed (larger fields)
         // unfilterable: {
@@ -136,18 +139,56 @@ async function storeVectorsS3Vectors(docId, vectors, chunks, docMeta){
       category: sampleMetadata.category,
       audience: sampleMetadata.audience,
       chunkIdx: sampleMetadata.chunkIdx,
-      text: sampleMetadata.text
+      text: sampleMetadata.text,
+      agentId: sampleMetadata.agentId,
+      docId: sampleMetadata.docId
     };
     const filterableSize = getJsonSize(filterableMetadata);
     const totalSize = getJsonSize(sampleMetadata);
     console.log(`Metadata sizes - Filterable: ${filterableSize}B, Total: ${totalSize}B`);
   }
 
-  await client.send(new PutVectorsCommand({
+  await s3vectors.send(new PutVectorsCommand({
     vectorBucketName: VEC_BUCKET,
-    indexName: VEC_INDEX,
+    indexName: targetIndex,
     vectors: items
   }));
+}
+
+async function ensureVectorIndex(indexName) {
+  if (!VEC_BUCKET || !indexName) {return;}
+  try {
+    await s3vectors.send(new CreateIndexCommand({
+      vectorBucketName: VEC_BUCKET,
+      indexName,
+      vectorDimension: VEC_DIMENSION,
+      vectorType: 'float32'
+    }));
+  } catch (error) {
+    const status = error?.$metadata?.httpStatusCode;
+    if (status !== 409) {
+      console.warn('ensureVectorIndex failed:', error?.message || error);
+    }
+  }
+}
+
+async function getAgentVectorIndex(agentId) {
+  if (!SETTINGS_TABLE || !agentId) return agentId || VEC_INDEX;
+  try {
+    const res = await ddb.send(new GetItemCommand({
+      TableName: SETTINGS_TABLE,
+      Key: marshall({ PK: `AGENT#${agentId}`, SK: 'SETTINGS#V1' })
+    }));
+    if (res.Item) {
+      const item = unmarshall(res.Item);
+      const data = item.data || item;
+      const configured = data?.search?.vectorIndex;
+      if (configured) return configured;
+    }
+  } catch (error) {
+    console.warn('getAgentVectorIndex failed:', error?.message || error);
+  }
+  return agentId || VEC_INDEX;
 }
 
 // -------------------- Term Stats + Popularity Materialization --------------------
@@ -337,8 +378,11 @@ exports.handler = async (event, context, callback) => {
       docMeta = dres.Item ? unmarshall(dres.Item) : null;
     } catch {}
 
+    const vectorIndex = await getAgentVectorIndex(agentId);
+
     if (VEC_MODE === 's3vectors') {
-      await storeVectorsS3Vectors(docId, vectors, chunks, docMeta);
+      await ensureVectorIndex(vectorIndex);
+      await storeVectorsS3Vectors(agentId, vectorIndex, docId, vectors, chunks, docMeta);
     } else if (VEC_MODE === 's3') {
       await storeVectorsS3(docId, vectors, chunks, docMeta);
     } else {
