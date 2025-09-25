@@ -26,12 +26,11 @@ Format your response to be easily scannable.`,
     notes: '',
     allowedOrigins: [],
     notifyEmails: [],
-    // Search-related defaults including synonyms behavior
+    // Search-related defaults including query expansion behavior
     search: {
-      queryExpansion: { enabled: false, maxVariants: 3 },
+      queryExpansion: { enabled: true, maxVariants: 3 },
       lexicalBoost: { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 },
-      embeddingModel: 'text-embedding-3-small',
-      synonyms: { autoApprove: false }
+      embeddingModel: 'text-embedding-3-small'
     },
     updatedAt: new Date().toISOString()
   };
@@ -62,7 +61,6 @@ function validate(input){
     const s = input.search;
     if (s.queryExpansion && typeof s.queryExpansion === 'object') {
       out.search.queryExpansion = {};
-      if (typeof s.queryExpansion.enabled === 'boolean') out.search.queryExpansion.enabled = s.queryExpansion.enabled;
       if (typeof s.queryExpansion.maxVariants === 'number') out.search.queryExpansion.maxVariants = s.queryExpansion.maxVariants;
     }
     if (s.lexicalBoost && typeof s.lexicalBoost === 'object') {
@@ -72,10 +70,6 @@ function validate(input){
       if (typeof s.lexicalBoost.overlapBoost === 'number') out.search.lexicalBoost.overlapBoost = s.lexicalBoost.overlapBoost;
     }
     if (typeof s.embeddingModel === 'string') out.search.embeddingModel = s.embeddingModel;
-    if (s.synonyms && typeof s.synonyms === 'object') {
-      out.search.synonyms = {};
-      if (typeof s.synonyms.autoApprove === 'boolean') out.search.synonyms.autoApprove = s.synonyms.autoApprove;
-    }
   }
   return out;
 }
@@ -122,6 +116,13 @@ exports.handler = async (event, context, callback) => {
       response.statusCode = 400;
       response.body = JSON.stringify({ message: 'confidenceThreshold is required (0..1)' });
       return callback(null, response);
+    }
+
+    if (!data.search) data.search = {};
+    if (!data.search.queryExpansion) data.search.queryExpansion = {};
+    data.search.queryExpansion.enabled = true;
+    if (typeof data.search.queryExpansion.maxVariants !== 'number') {
+      data.search.queryExpansion.maxVariants = 3;
     }
 
     const now = new Date().toISOString();

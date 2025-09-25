@@ -1,6 +1,5 @@
-const { DynamoDBClient, QueryCommand, GetItemCommand, PutItemCommand } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBClient, QueryCommand, PutItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
-const { getOpenAIClient } = require('./helpers/openai-client');
 const { response } = require('./helpers/utils');
 
 const TABLE = process.env.SETTINGS_TABLE;
@@ -90,20 +89,6 @@ function buildGroups(terms){
   return groups;
 }
 
-async function getAgentSettings(agentId){
-  const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall({ PK:`AGENT#${agentId}`, SK:'SETTINGS#V1' }) }));
-  const item = res.Item ? unmarshall(res.Item).data : {};
-  return item || {};
-}
-
-async function writeDraft(agentId, groups){
-  const now = new Date().toISOString();
-  const version = `draft-${Date.now()}`;
-  const item = { PK: `AGENT#${agentId}`, SK: 'SYNONYMS#DRAFT', data: { version, groups, updatedAt: now } };
-  await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(item) }));
-  return version;
-}
-
 async function publish(agentId, groups){
   const now = new Date().toISOString();
   const version = String(Date.now());
@@ -149,26 +134,13 @@ exports.handler = async (event, context, callback) => {
 
     const terms = await fetchTopTerms(agentId, 200);
     const groups = buildGroups(terms);
-    const settings = await getAgentSettings(agentId);
-    const autoApprove = !!settings?.search?.synonyms?.autoApprove;
-
-    if (autoApprove) {
-      const version = await publish(agentId, groups);
-      if (method) {
-        response.statusCode = 200;
-        response.body = JSON.stringify({ success: true, published: true, version, groupsCount: groups.length });
-        return callback(null, response);
-      }
-      return { statusCode: 200, body: JSON.stringify({ success: true, published: true, version, groupsCount: groups.length }) };
-    } else {
-      const version = await writeDraft(agentId, groups);
-      if (method) {
-        response.statusCode = 200;
-        response.body = JSON.stringify({ success: true, published: false, version, groupsCount: groups.length });
-        return callback(null, response);
-      }
-      return { statusCode: 200, body: JSON.stringify({ success: true, published: false, version, groupsCount: groups.length }) };
+    const version = await publish(agentId, groups);
+    if (method) {
+      response.statusCode = 200;
+      response.body = JSON.stringify({ success: true, published: true, version, groupsCount: groups.length });
+      return callback(null, response);
     }
+    return { statusCode: 200, body: JSON.stringify({ success: true, published: true, version, groupsCount: groups.length }) };
   } catch (e) {
     console.error('synonymsGen error', e);
     if (event?.httpMethod || event?.requestContext?.http?.method) {

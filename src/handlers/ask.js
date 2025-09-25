@@ -53,7 +53,12 @@ Guidelines:
 - Format numbers and prices clearly
 - If the context is incomplete, briefly mention what's missing
 
-Format your response to be easily scannable.`
+Format your response to be easily scannable.`,
+    search: {
+      queryExpansion: { enabled: true, maxVariants: 3 },
+      lexicalBoost: { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 },
+      embeddingModel: 'text-embedding-3-small'
+    }
   };
 }
 
@@ -129,32 +134,6 @@ async function debugS3VectorsIndex(indexName) {
   }
 }
 
-async function debugS3BucketContents() {
-  try {
-    const s3 = new S3Client({});
-    const listCommand = new ListObjectsV2Command({
-      Bucket: VECTOR_BUCKET,
-      MaxKeys: 10
-    });
-
-    const response = await s3.send(listCommand);
-    console.log('S3 Bucket Contents Sample:', {
-      totalObjects: response.KeyCount,
-      isTruncated: response.IsTruncated,
-      objects: response.Contents?.slice(0, 5)?.map(obj => ({
-        key: obj.Key,
-        size: obj.Size,
-        lastModified: obj.LastModified
-      }))
-    });
-
-    return response;
-  } catch (error) {
-    console.error('Failed to list S3 bucket contents:', error);
-    return null;
-  }
-}
-
 exports.handler = async (event, context, callback) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
@@ -218,7 +197,7 @@ exports.handler = async (event, context, callback) => {
     confidenceThreshold: 0.45,
     fallbackMessage: 'I could not find this information in the documentation.',
     search: {
-      queryExpansion: { enabled: false, maxVariants: 3 },
+      queryExpansion: { enabled: true, maxVariants: 3 },
       lexicalBoost: { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 },
       embeddingModel: 'text-embedding-3-small'
     }
@@ -226,7 +205,13 @@ exports.handler = async (event, context, callback) => {
 
   // Ensure defaults for search settings
   const searchCfg = agentSettings.search || {};
-  if (!searchCfg.queryExpansion) searchCfg.queryExpansion = { enabled: false, maxVariants: 3 };
+  if (!searchCfg.queryExpansion) searchCfg.queryExpansion = { enabled: true, maxVariants: 3 };
+  else {
+    searchCfg.queryExpansion.enabled = true;
+    if (typeof searchCfg.queryExpansion.maxVariants !== 'number') {
+      searchCfg.queryExpansion.maxVariants = 3;
+    }
+  }
   if (!searchCfg.lexicalBoost) searchCfg.lexicalBoost = { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 };
   if (!searchCfg.embeddingModel) searchCfg.embeddingModel = 'text-embedding-3-small';
   if (agentId && !searchCfg.vectorIndex) searchCfg.vectorIndex = agentId;
@@ -257,10 +242,6 @@ exports.handler = async (event, context, callback) => {
   // Note: filter structure must match S3 Vectors expectations if used.
   const vectorIndexName = searchCfg.vectorIndex || VECTOR_INDEX;
   let appliedFilter = filter || null;
-  if (agentId && VECTOR_MODE === 's3vectors') {
-    const agentFilter = `agentId = \"${String(agentId).replace(/"/g, '\\"')}\"`;
-    appliedFilter = appliedFilter ? `(${agentFilter}) AND (${appliedFilter})` : agentFilter;
-  }
   const searchStartTime = Date.now();
   for (let i = 0; i < expansions.length; i++) {
     const qx = expansions[i];
@@ -321,17 +302,8 @@ exports.handler = async (event, context, callback) => {
     results = boosted.results;
     boostDebug = boosted.boosts;
   }
-  // Add comprehensive debugging
-  console.log('=== VECTOR SEARCH DEBUG ===');
-  console.log('VECTOR_MODE:', VECTOR_MODE);
-  console.log('VECTOR_BUCKET:', VECTOR_BUCKET);
-  console.log('VECTOR_INDEX:', vectorIndexName);
-  console.log('AgentId:', agentId);
-  console.log('Original filter:', filter);
-
   // Debug the index itself
   const indexInfo = await debugS3VectorsIndex(vectorIndexName);
-  const bucketInfo = await debugS3BucketContents();
 
   // searchTime already computed above after merging results
   const confidence = results[0]?.score || 0;

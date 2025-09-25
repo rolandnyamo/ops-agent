@@ -157,17 +157,20 @@ async function storeVectorsS3Vectors(agentId, indexName, docId, vectors, chunks,
 
 async function ensureVectorIndex(indexName) {
   if (!VEC_BUCKET || !indexName) {return;}
+  const dimension = Number.isFinite(VEC_DIMENSION) && VEC_DIMENSION > 0 ? VEC_DIMENSION : 1536;
   try {
     await s3vectors.send(new CreateIndexCommand({
       vectorBucketName: VEC_BUCKET,
       indexName,
-      vectorDimension: VEC_DIMENSION,
-      vectorType: 'float32'
+      dimension,
+      dataType: 'float32',
+      distanceMetric: 'cosine'
     }));
   } catch (error) {
     const status = error?.$metadata?.httpStatusCode;
     if (status !== 409) {
       console.warn('ensureVectorIndex failed:', error?.message || error);
+      throw error;
     }
   }
 }

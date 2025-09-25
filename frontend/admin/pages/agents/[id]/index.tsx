@@ -80,7 +80,6 @@ export default function AgentDetail(){
             <Link href={`/agents/${agentId}/add-content`} className="btn">Add Content</Link>
             <Link href={`/agents/${agentId}/sources`} className="btn ghost">My Sources</Link>
             <Link href={`/agents/${agentId}/bots`} className="btn ghost">Bots</Link>
-            <Link href={`/agents/${agentId}/synonyms`} className="btn ghost">Synonyms</Link>
             <Link href={`/agents/${agentId}/setup`} className="btn ghost">Setup</Link>
           </div>
           <div className="muted mini" style={{marginTop:8}}>Add documents, manage bots, review sources, and configure settings for this agent.</div>

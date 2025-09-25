@@ -328,13 +328,6 @@ Resources:
               Action:
                 - dynamodb:*
               Resource: "*"
-      Events:
-        HttpTrigger: # optional manual trigger
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /agents/{agentId}/synonyms/generate
-            Method: POST
 
   SynonymsEventRule:
     Type: AWS::Events::Rule
@@ -499,24 +492,6 @@ Resources:
             RestApiId: !Ref Api
             Path: /agents/{agentId}
             Method: DELETE
-        GetSynonymsDraft:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /agents/{agentId}/synonyms/draft
-            Method: GET
-        PutSynonymsDraft:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /agents/{agentId}/synonyms/draft
-            Method: PUT
-        PublishSynonyms:
-          Type: Api
-          Properties:
-            RestApiId: !Ref Api
-            Path: /agents/{agentId}/synonyms/publish
-            Method: POST
             
   BotsFn:
     Type: AWS::Serverless::Function

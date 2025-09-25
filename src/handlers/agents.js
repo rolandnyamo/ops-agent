@@ -26,12 +26,14 @@ function parse(event){ try { return event?.body ? (typeof event.body==='string'?
 
 async function ensureAgentVectorIndex(agentId) {
   if (!VECTOR_BUCKET || !agentId) return null;
+  const dimension = Number.isFinite(VECTOR_DIMENSION) && VECTOR_DIMENSION > 0 ? VECTOR_DIMENSION : 1536;
   try {
     await s3v.send(new CreateIndexCommand({
       vectorBucketName: VECTOR_BUCKET,
       indexName: agentId,
-      vectorDimension: VECTOR_DIMENSION,
-      vectorType: 'float32'
+      dimension,
+      dataType: 'float32',
+      distanceMetric: 'cosine'
     }));
     return agentId;
   } catch (error) {
@@ -39,8 +41,8 @@ async function ensureAgentVectorIndex(agentId) {
     if (status === 409 || error?.name === 'ConflictException') {
       return agentId;
     }
-    console.warn('Failed to ensure agent vector index:', error?.message || error);
-    return agentId;
+    console.error('Failed to ensure agent vector index:', error?.message || error);
+    throw error;
   }
 }
 
@@ -93,44 +95,57 @@ exports.handler = async (event, context, callback) => {
   const agentIdParam = event?.pathParameters?.agentId;
 
   if (method === 'POST' && path.endsWith('/agents')){
-    const body = parse(event);
-    const useCase = body.useCase;
-    const agentId = crypto.randomUUID().slice(0,8);
-    const info = { PK: `AGENT#${agentId}`, SK: 'AGENT', data: { agentId, createdAt: new Date().toISOString() } };
-    await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(info) }));
-    await ensureAgentVectorIndex(agentId);
+    try {
+      const body = parse(event);
+      const useCase = body.useCase;
+      const agentId = crypto.randomUUID().slice(0,8);
+      await ensureAgentVectorIndex(agentId);
 
-    const inferred = useCase ? await inferSettings(useCase) : null;
-    const nowIso = new Date().toISOString();
-    const baseSearch = {
-      queryExpansion: { enabled: false, maxVariants: 3 },
-      lexicalBoost: { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 },
-      embeddingModel: 'text-embedding-3-small',
-      synonyms: { autoApprove: false },
-      vectorIndex: agentId
-    };
-    const baseSettings = {
-      agentName: inferred?.agentName || 'Agent',
-      confidenceThreshold: inferred?.confidenceThreshold ?? 0.45,
-      fallbackMessage: inferred?.fallbackMessage || 'Sorry, I could not find this in the documentation.',
-      organizationType: inferred?.organizationType || '',
-      categories: inferred?.categories || [],
-      audiences: inferred?.audiences || ['All'],
-      notes: inferred?.notes || '',
-      allowedOrigins: [],
-      notifyEmails: [],
-      search: { ...baseSearch, ...(inferred?.search || {}) },
-      updatedAt: nowIso
-    };
-    if (!baseSettings.search.vectorIndex) {
-      baseSettings.search.vectorIndex = agentId;
+      const info = { PK: `AGENT#${agentId}`, SK: 'AGENT', data: { agentId, createdAt: new Date().toISOString() } };
+      await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(info) }));
+
+      const inferred = useCase ? await inferSettings(useCase) : null;
+      const nowIso = new Date().toISOString();
+      const baseSearch = {
+        queryExpansion: { enabled: true, maxVariants: 3 },
+        lexicalBoost: { enabled: true, presenceBoost: 0.12, overlapBoost: 0.05 },
+        embeddingModel: 'text-embedding-3-small',
+        vectorIndex: agentId
+      };
+      const baseSettings = {
+        agentName: inferred?.agentName || 'Agent',
+        confidenceThreshold: inferred?.confidenceThreshold ?? 0.45,
+        fallbackMessage: inferred?.fallbackMessage || 'Sorry, I could not find this in the documentation.',
+        organizationType: inferred?.organizationType || '',
+        categories: inferred?.categories || [],
+        audiences: inferred?.audiences || ['All'],
+        notes: inferred?.notes || '',
+        allowedOrigins: [],
+        notifyEmails: [],
+        search: { ...baseSearch, ...(inferred?.search || {}) },
+        updatedAt: nowIso
+      };
+      if (!baseSettings.search.vectorIndex) {
+        baseSettings.search.vectorIndex = agentId;
+      }
+      if (baseSettings.search.queryExpansion) {
+        baseSettings.search.queryExpansion.enabled = true;
+        if (typeof baseSettings.search.queryExpansion.maxVariants !== 'number') {
+          baseSettings.search.queryExpansion.maxVariants = 3;
+        }
+      }
+      const settings = { PK: `AGENT#${agentId}`, SK: 'SETTINGS#V1', data: baseSettings };
+      await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(settings) }));
+
+      response.body = JSON.stringify({ agentId });
+      response.statusCode = 201;
+      return callback(null, response);
+    } catch (error) {
+      console.error('Create agent error:', error);
+      response.statusCode = 500;
+      response.body = JSON.stringify({ message: 'Failed to create agent', error: error?.message || 'create_failed' });
+      return callback(null, response);
     }
-    const settings = { PK: `AGENT#${agentId}`, SK: 'SETTINGS#V1', data: baseSettings };
-    await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(settings) }));
-
-    response.body = JSON.stringify({ agentId });
-    response.statusCode = 201;
-    return callback(null, response);
   }
 
   if (method === 'GET' && path.endsWith('/agents')){
@@ -150,82 +165,18 @@ exports.handler = async (event, context, callback) => {
     if (resObj.search && !resObj.search.vectorIndex) {
       resObj.search.vectorIndex = agentIdParam;
     }
-
-    response.body = JSON.stringify({ ...resObj });
-    response.statusCode = 200;
-    return callback(null, response);
-  }
-
-  // ---- Synonyms draft endpoints ----
-  if (method === 'GET' && path.endsWith(`/agents/${agentIdParam}/synonyms/draft`)) {
-    const key = { PK: `AGENT#${agentIdParam}`, SK: 'SYNONYMS#DRAFT' };
-    const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall(key) }));
-    const data = res.Item ? unmarshall(res.Item).data : null;
-    response.body = JSON.stringify({ draft: data });
-    response.statusCode = 200;
-    return callback(null, response);
-  }
-
-  if (method === 'PUT' && path.endsWith(`/agents/${agentIdParam}/synonyms/draft`)) {
-    const body = parse(event);
-    const groups = Array.isArray(body?.groups) ? body.groups : [];
-    const version = body?.version || `draft-${Date.now()}`;
-    const now = new Date().toISOString();
-    const item = { PK: `AGENT#${agentIdParam}`, SK: 'SYNONYMS#DRAFT', data: { version, groups, updatedAt: now } };
-    await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(item) }));
-    response.body = JSON.stringify({ success: true, draft: item.data });
-    response.statusCode = 200;
-    return callback(null, response);
-  }
-
-  if (method === 'POST' && path.endsWith(`/agents/${agentIdParam}/synonyms/publish`)) {
-    // Promote current draft to an active version
-    const { PutItemCommand, BatchWriteItemCommand } = require('@aws-sdk/client-dynamodb');
-    const { GetItemCommand: GetIt } = require('@aws-sdk/client-dynamodb');
-    const draftKey = { PK: `AGENT#${agentIdParam}`, SK: 'SYNONYMS#DRAFT' };
-    const dres = await ddb.send(new GetIt({ TableName: TABLE, Key: marshall(draftKey) }));
-    const draft = dres.Item ? unmarshall(dres.Item).data : null;
-    if (!draft || !Array.isArray(draft.groups) || draft.groups.length === 0) {
-      response.statusCode = 400;
-      response.body = JSON.stringify({ message: 'No draft to publish' });
-      return callback(null, response);
-    }
-    const version = String(Date.now());
-    const now = new Date().toISOString();
-
-    // Write groups and variants
-    for (let i = 0; i < draft.groups.length; i++) {
-      const g = draft.groups[i];
-      const groupId = g.groupId || String(i + 1).padStart(4, '0');
-      const groupItem = {
-        PK: `AGENT#${agentIdParam}`,
-        SK: `SYNONYMS#v${version}#GROUP#${groupId}`,
-        canonical: g.canonical,
-        variants: g.variants || [],
-        weight: g.weight || 1,
-        updatedAt: now
-      };
-      await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(groupItem) }));
-      for (const v of (g.variants || [])) {
-        const norm = String(v || '').toLowerCase().trim().replace(/\s+/g, ' ');
-        if (!norm) continue;
-        const varItem = {
-          PK: `AGENT#${agentIdParam}`,
-          SK: `SYNVAR#v${version}#${norm}`,
-          canonical: g.canonical,
-          groupId,
-          weight: g.weight || 1,
-          updatedAt: now
-        };
-        await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(varItem) }));
+    if (resObj.search) {
+      if (!resObj.search.queryExpansion) {
+        resObj.search.queryExpansion = { enabled: true, maxVariants: 3 };
+      } else {
+        resObj.search.queryExpansion.enabled = true;
+        if (typeof resObj.search.queryExpansion.maxVariants !== 'number') {
+          resObj.search.queryExpansion.maxVariants = 3;
+        }
       }
     }
 
-    // Activate
-    const active = { PK: `AGENT#${agentIdParam}`, SK: 'SYNONYMS#ACTIVE', version: String(version), createdAt: now };
-    await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(active) }));
-
-    response.body = JSON.stringify({ success: true, version });
+    response.body = JSON.stringify({ ...resObj });
     response.statusCode = 200;
     return callback(null, response);
   }
