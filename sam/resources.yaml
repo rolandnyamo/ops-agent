@@ -433,6 +433,11 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
+                - s3:DeleteObject
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
                 - events:PutEvents
               Resource: '*'
       Events:
@@ -496,6 +501,8 @@ Resources:
             RestApiId: !Ref Api
             Path: /translations/{translationId}
             Method: DELETE
+            Auth:
+              Authorizer: AdminCognitoAuth
 
   TranslationWorkerFn:
     Type: AWS::Serverless::Function
