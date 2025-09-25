@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
 import Layout from '../../components/Layout';
 import {
   createTranslationUploadUrl,
@@ -37,10 +36,10 @@ function statusClass(status: string) {
 }
 
 export default function TranslationsPage() {
-  const router = useRouter();
   const [items, setItems] = useState<TranslationItem[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [inferring, setInferring] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -76,6 +75,12 @@ export default function TranslationsPage() {
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     if (!items.length) return;
@@ -164,7 +169,7 @@ export default function TranslationsPage() {
       if (!file) throw new Error('Please choose a document');
       const upload = await createTranslationUploadUrl(file.name, file.type || 'application/octet-stream');
       await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': upload.contentType }, body: file });
-      const created = await createTranslation({
+      await createTranslation({
         translationId: upload.translationId,
         fileKey: upload.fileKey,
         originalFilename: upload.filename,
@@ -175,7 +180,7 @@ export default function TranslationsPage() {
       });
       closeModal();
       await refresh(true);
-      router.push(`/translations/${created.translationId}`);
+      setNotice('Translation submitted. Processing will continue in the background.');
     } catch (err: any) {
       setError(err.message || 'Translation request failed');
     } finally {
@@ -205,7 +210,7 @@ export default function TranslationsPage() {
     if (fileRef.current) {
       fileRef.current.value = '';
     }
-    await handleFileSelection(file);
+      await handleFileSelection(file);
   }, [handleFileSelection]);
 
   const prevent = useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -224,6 +229,12 @@ export default function TranslationsPage() {
           New translation
         </button>
       </div>
+
+      {notice && (
+        <div className="chip" style={{ borderColor: 'var(--accent)', background: 'rgba(14,116,144,.12)', marginBottom: 16 }}>
+          {notice}
+        </div>
+      )}
 
       {error && (
         <div className="chip" style={{ borderColor: 'var(--danger)', background: 'rgba(220,38,38,.08)', marginBottom: 16 }}>
@@ -411,6 +422,10 @@ export default function TranslationsPage() {
           max-width: 640px;
           width: 100%;
           box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
+        }
+        .modal .upload-zone .muted,
+        .modal .upload-zone .muted.mini {
+          color: rgba(248, 250, 252, 0.82);
         }
       `}</style>
     </Layout>

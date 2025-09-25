@@ -83,8 +83,8 @@ async function translateChunkOpenAI({ html, sourceLanguage, targetLanguage, mode
     const resp = await openai.responses.create({
       model,
       input: [
-        { role: 'system', content: [{ type: 'text', text: systemPrompt }] },
-        { role: 'user', content: [{ type: 'text', text: `${correctivePrompt}\n\n<snippet>\n${html}\n</snippet>` }] }
+        { role: 'system', content: [{ type: 'input_text', text: systemPrompt }] },
+        { role: 'user', content: [{ type: 'input_text', text: `${correctivePrompt}\n\n<snippet>\n${html}\n</snippet>` }] }
       ],
       max_output_tokens: 2048,
       temperature: 0.2
