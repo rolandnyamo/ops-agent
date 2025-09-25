@@ -162,7 +162,19 @@ Format your response to be easily scannable.`);
               <div style={{marginTop:16}}>
                 <h4>Test Result</h4>
                 <div style={{padding:12, background:'#f8f9fa', borderRadius:6, marginTop:8}}>
-                  <div><strong>Answer:</strong> {testResults.current.answer}</div>
+                  <div>
+                    <strong>Answer:</strong>
+                    {testResults.current.answerFormat === 'html' ? (
+                      <div
+                        style={{ marginTop: 4 }}
+                        dangerouslySetInnerHTML={{ __html: testResults.current.answer }}
+                      />
+                    ) : (
+                      <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}>
+                        {testResults.current.answer}
+                      </div>
+                    )}
+                  </div>
                   <div style={{marginTop:8}}><strong>Confidence:</strong> {(testResults.current.confidence * 100).toFixed(1)}%</div>
                   <div><strong>Grounded:</strong> {testResults.current.grounded ? 'Yes' : 'No'}</div>
                   {testResults.current.citations?.length > 0 && (

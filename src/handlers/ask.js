@@ -1,5 +1,5 @@
 const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { S3VectorsClient, QueryVectorsCommand, DescribeIndexCommand, GetIndexCommand } = require('@aws-sdk/client-s3vectors');
+const { S3VectorsClient, QueryVectorsCommand, GetIndexCommand } = require('@aws-sdk/client-s3vectors');
 const { DynamoDBClient, GetItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { getOpenAIClient } = require('./helpers/openai-client');
@@ -74,33 +74,6 @@ function cosine(a, b){
   return dot / (Math.sqrt(a2) * Math.sqrt(b2) + 1e-8);
 }
 
-async function queryS3Vectors(vector, topK=5, filter, indexName){
-  const client = new S3VectorsClient({});
-  const params = {
-    vectorBucketName: VECTOR_BUCKET,
-    indexName: indexName || VECTOR_INDEX,
-    queryVector: { float32: vector },
-    topK,
-    returnMetadata: true  // This is the key parameter to get metadata!
-  };
-  if (filter) {params.filter = filter;}
-
-  console.log('S3Vectors query params:', JSON.stringify(params, null, 2));
-  const res = await client.send(new QueryVectorsCommand(params));
-  console.log('S3Vectors raw response sample:', JSON.stringify({
-    vectorCount: res?.vectors?.length,
-    // firstResult: res?.vectors?.[0],
-    hasMetadata: !!res?.vectors?.[0]?.metadata
-  }, null, 2));
-
-  const items = res?.vectors || [];
-  return items.map((r) => ({
-    score: r.distance ?? r.score ?? 0.5, // Still need to find the correct field for similarity score
-    metadata: r.metadata || { docId: r.key, text: `Document chunk: ${r.key}` },
-    text: r.metadata?.text || `Content from ${r.key}`
-  }));
-}
-
 async function queryS3Jsonl(vector, topK=5, agentId){
   const s3 = new S3Client({});
   const prefix = agentId ? `vectors/${agentId}/` : 'vectors/';
@@ -134,6 +107,90 @@ async function debugS3VectorsIndex(indexName) {
   }
 }
 
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function toHtml(rawAnswer) {
+  const lines = (rawAnswer || '').split(/\r?\n/);
+  const htmlParts = [];
+  let listType = null;
+  let listItems = [];
+  let paragraphLines = [];
+
+  const flushParagraph = () => {
+    if (paragraphLines.length > 0) {
+      htmlParts.push(`<p>${paragraphLines.join('<br />')}</p>`);
+      paragraphLines = [];
+    }
+  };
+
+  const flushList = () => {
+    if (listType && listItems.length > 0) {
+      htmlParts.push(`<${listType}>${listItems.join('')}</${listType}>`);
+      listType = null;
+      listItems = [];
+    }
+  };
+
+  for (const line of lines) {
+    const unorderedMatch = line.match(/^\s*[-*+]\s+(.*)$/);
+    const orderedMatch = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
+
+    if (unorderedMatch) {
+      flushParagraph();
+      const content = escapeHtml(unorderedMatch[1].trim());
+      if (listType !== 'ul') {
+        flushList();
+        listType = 'ul';
+      }
+      listItems.push(`<li>${content}</li>`);
+    } else if (orderedMatch) {
+      flushParagraph();
+      const content = escapeHtml(orderedMatch[2].trim());
+      if (listType !== 'ol') {
+        flushList();
+        listType = 'ol';
+      }
+      listItems.push(`<li>${content}</li>`);
+    } else if (line.trim() === '') {
+      flushParagraph();
+      flushList();
+    } else {
+      flushList();
+      paragraphLines.push(escapeHtml(line.trim()));
+    }
+  }
+
+  flushParagraph();
+  flushList();
+
+  if (htmlParts.length === 0) {
+    return '';
+  }
+
+  return htmlParts.join('');
+}
+
+function formatAnswer(rawAnswer, format) {
+  const safeAnswer = typeof rawAnswer === 'string' ? rawAnswer : '';
+  switch (format) {
+    case 'text':
+      return safeAnswer;
+    case 'markdown':
+      return safeAnswer;
+    case 'html':
+    default:
+      return toHtml(safeAnswer);
+  }
+}
+
 exports.handler = async (event, context, callback) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
@@ -152,6 +209,9 @@ exports.handler = async (event, context, callback) => {
   const filter = body?.filter;
   let agentId = body?.agentId;
   const debug = body?.debug === true;
+  const requestedFormat = typeof body?.responseFormat === 'string' ? body.responseFormat.toLowerCase() : undefined;
+  const allowedFormats = new Set(['html', 'markdown', 'text']);
+  const responseFormat = allowedFormats.has(requestedFormat) ? requestedFormat : 'html';
 
   // Check authentication context from the authorizer
   const authorizerContext = event.requestContext?.authorizer;
@@ -314,7 +374,7 @@ exports.handler = async (event, context, callback) => {
     score: Number((r.score||0).toFixed(3))
   }));
 
-  let answer;
+  let rawAnswer;
   let aiPrompt = null;
   const aiStartTime = Date.now();
 
@@ -356,21 +416,24 @@ Provide a concise, well-formatted answer based on the above context.`;
         }
       });
 
-      answer = response.success ? response.text : `Based on your sources:\n\n${snippets}`;
+      rawAnswer = response.success ? response.text : `Based on your sources:\n\n${snippets}`;
     } catch (error) {
       // Fallback to raw snippets if AI fails
-      answer = `Based on your sources:\n\n${snippets}`;
+      rawAnswer = `Based on your sources:\n\n${snippets}`;
     }
   } else {
     // Use agent-specific fallback message when confidence is too low or no results
-    answer = agentSettings.fallbackMessage;
+    rawAnswer = agentSettings.fallbackMessage;
   }
 
   const aiTime = Date.now() - aiStartTime;
   const totalTime = Date.now() - startTime;
 
+  const formattedAnswer = formatAnswer(rawAnswer, responseFormat);
+
   const responseBody = {
-    answer,
+    answer: formattedAnswer,
+    answerFormat: responseFormat,
     grounded,
     confidence: Number(confidence.toFixed(3)),
     citations

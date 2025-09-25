@@ -1,8 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { ask } from '../lib/api';
+import { ask, type AnswerFormat } from '../lib/api';
 import { useAgent } from '../lib/agent';
 
-type Msg = { id: string; role: 'me'|'bot'; text: string };
+type Msg = { id: string; role: 'me'|'bot'; text: string; format?: AnswerFormat };
+
+function escapeHtml(str: string) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 export default function ChatPanel(){
   const { agentId } = useAgent();
@@ -23,10 +32,23 @@ export default function ChatPanel(){
     try{
       const r = await ask(q, agentId);
       const answer = r.answer || 'No answer';
-      const cites = (r.citations||[]).map(c=>`[${c.docId} #${c.chunk}] (${c.score})`).join(' ');
-      setMessages(m => [...m, { id: 'b'+id, role: 'bot', text: `${answer}\n\n${cites}` }]);
+      const answerFormat = r.answerFormat || 'html';
+      const citations = (r.citations || []).map(c => `[${c.docId} #${c.chunk}] (${c.score})`);
+      let combinedAnswer = answer;
+      let combinedFormat: AnswerFormat = answerFormat;
+
+      if (answerFormat === 'html') {
+        const citationHtml = citations.length > 0
+          ? `<div style="margin-top:12px;font-size:12px;color:var(--muted);">${citations.map(label => escapeHtml(label)).join('<br />')}</div>`
+          : '';
+        combinedAnswer = `${answer}${citationHtml}`;
+      } else if (citations.length > 0) {
+        combinedAnswer = `${answer}\n\n${citations.join('\n')}`;
+      }
+
+      setMessages(m => [...m, { id: 'b'+id, role: 'bot', text: combinedAnswer, format: combinedFormat }]);
     } catch(e:any){
-      setMessages(m => [...m, { id: 'b'+id, role: 'bot', text: 'Error calling /qa' }]);
+      setMessages(m => [...m, { id: 'b'+id, role: 'bot', text: 'Error calling /qa', format: 'text' }]);
     }
     setBusy(false);
   }
@@ -39,7 +61,13 @@ export default function ChatPanel(){
       </div>
       <div className="chat">
         {messages.map(m => (
-          <div key={m.id} className={`bubble ${m.role}`}>{m.text}</div>
+          <div key={m.id} className={`bubble ${m.role}`}>
+            {m.format === 'html' ? (
+              <span dangerouslySetInnerHTML={{ __html: m.text }} />
+            ) : (
+              <span style={{ whiteSpace: 'pre-wrap' }}>{m.text}</span>
+            )}
+          </div>
         ))}
       </div>
       <div className="footer">
