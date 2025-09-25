@@ -7,6 +7,7 @@ import { useAgent } from '../lib/agent';
 const tabs = [
   { href: '/', label: 'Agents' },
   { href: '/users', label: 'Users' },
+  { href: '/translations', label: 'Translations' },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }){
@@ -19,9 +20,10 @@ export default function Layout({ children }: { children: React.ReactNode }){
         <div className="nav-inner">
           <div className="brand"><span className="badge"/> Ops Agent</div>
           <div className="tabs">
-            {tabs.map(t => (
-              <Link key={t.href} href={t.href} className={`tab ${pathname === t.href ? 'active':''}`}>{t.label}</Link>
-            ))}
+            {tabs.map(t => {
+              const active = pathname === t.href || pathname.startsWith(`${t.href}/`);
+              return <Link key={t.href} href={t.href} className={`tab ${active ? 'active':''}`}>{t.label}</Link>;
+            })}
           </div>
           <div style={{marginLeft:'auto'}} className="row">
             <div className="pill mini">{user?.signInDetails?.loginId || 'signed in'}</div>

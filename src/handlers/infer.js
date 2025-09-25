@@ -38,9 +38,10 @@ function settingsPrompt(useCase, year){
 }
 
 function docPrompt(filename, sampleText, year, knownCategories){
-  return `Given a file and sample text, infer JSON fields: title, category, audience ('All' default), year (default ${year}), version ('v1'), description (1-2 sentences).` +
+  return `Given a file and sample text, infer JSON fields: title, category, audience ('All' default), year (default ${year}), version ('v1'), description (1-2 sentences).
+Include language: ISO 639-1 code detected from the text (e.g. 'en' or 'fr').` +
   (knownCategories?.length ? ` Categories to prefer: ${knownCategories.join(', ')}.` : '') +
-  `\nReturn only JSON { title, category, audience, year, version, description }.\nFILENAME: ${filename}\nSAMPLE:\n${String(sampleText||'').slice(0,4000)}`;
+  `\nReturn only JSON { title, category, audience, year, version, description, language }.\nFILENAME: ${filename}\nSAMPLE:\n${String(sampleText||'').slice(0,4000)}`;
 }
 
 exports.handler = async (event, context, callback) => {
@@ -74,6 +75,11 @@ exports.handler = async (event, context, callback) => {
       data.year = data.year || nowYear;
       data.version = data.version || 'v1';
       data.audience = data.audience || 'All';
+      if (data.language) {
+        data.language = String(data.language).trim().toLowerCase().slice(0, 5);
+      } else {
+        data.language = sampleText && /[àâçéèêëîïôûùüÿñæœ]/i.test(sampleText) ? 'fr' : 'en';
+      }
       response.statusCode = 200;
       response.body = JSON.stringify(data);
       return callback(null, response);
