@@ -305,8 +305,8 @@ async function inviteUser(body) {
         { Name: 'email', Value: email },
         { Name: 'email_verified', Value: 'true' }
       ],
-      DesiredDeliveryMediums: ['EMAIL'],
-      MessageAction: 'SEND' // Send welcome email
+      DesiredDeliveryMediums: ['EMAIL']
+      // MessageAction defaults to sending invitation email
     });
 
     const response = await cognitoClient.send(command);
