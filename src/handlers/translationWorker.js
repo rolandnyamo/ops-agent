@@ -169,6 +169,7 @@ exports.handler = async (event) => {
     const chunkKey = `translations/chunks/${ownerId}/${translationId}.json`;
     try {
       await putObject(RAW_BUCKET, chunkKey, chunksPayload, 'application/json');
+      console.log('translationWorker chunks stored', { translationId, chunkKey, size: chunksPayload.length });
     } catch (chunkErr) {
       await failTranslation({ translationId, ownerId, errorMessage: 'Failed to persist translation chunks', context: { chunkKey, error: chunkErr.message } });
       return;
@@ -181,6 +182,7 @@ exports.handler = async (event) => {
     const machineKey = `translations/machine/${ownerId}/${translationId}.html`;
     try {
       await putObject(RAW_BUCKET, machineKey, machineHtml, 'text/html');
+      console.log('translationWorker machine HTML stored', { translationId, machineKey, length: machineHtml.length });
     } catch (htmlErr) {
       await failTranslation({ translationId, ownerId, errorMessage: 'Failed to persist machine translated HTML', context: { machineKey, error: htmlErr.message } });
       return;

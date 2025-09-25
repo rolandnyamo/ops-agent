@@ -1,5 +1,5 @@
 const { DynamoDBClient, QueryCommand, GetItemCommand, PutItemCommand, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
-const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { EventBridgeClient, PutEventsCommand } = require('@aws-sdk/client-eventbridge');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
@@ -135,6 +135,7 @@ async function createTranslation(body, eventOwner, requester) {
   });
 
   await ddb.send(new PutItemCommand({ TableName: DOCS_TABLE, Item: marshall(item) }));
+  console.log('translation created', { translationId, ownerId, originalFileKey: fileKey });
 
   await eb.send(new PutEventsCommand({
     Entries: [{
@@ -200,6 +201,19 @@ async function loadChunks(chunkKey) {
 
 async function saveChunks(chunkKey, payload) {
   await s3.send(new PutObjectCommand({ Bucket: RAW_BUCKET, Key: chunkKey, Body: JSON.stringify(payload), ContentType: 'application/json' }));
+}
+
+async function objectExists(key) {
+  try {
+    await s3.send(new HeadObjectCommand({ Bucket: RAW_BUCKET, Key: key }));
+    return true;
+  } catch (err) {
+    const status = err?.$metadata?.httpStatusCode;
+    if (status === 404 || status === 400) {
+      return false;
+    }
+    throw err;
+  }
 }
 
 async function handleChunkUpdate(event, translationId, ownerId, reviewer) {
@@ -282,6 +296,10 @@ async function handleDownload(translationId, ownerId, type) {
   const key = mapping[type] || mapping.original;
   if (!key) {
     throw new Error('Requested asset not available');
+  }
+  const exists = await objectExists(key);
+  if (!exists) {
+    throw Object.assign(new Error('Requested asset missing from storage'), { code: 'NotFound', key });
   }
   const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: RAW_BUCKET, Key: key }), { expiresIn: 900 });
   return { url, key };
@@ -376,6 +394,10 @@ exports.handler = async (event, context, callback) => {
 
     return ok(405, { message: 'Method not allowed' }, callback);
   } catch (error) {
+    if (error?.code === 'NotFound') {
+      console.warn('translations handler asset missing', { path, method, ownerId, message: error.message, key: error.key });
+      return ok(404, { message: error.message || 'Asset not found', key: error.key }, callback);
+    }
     console.error('translations handler error', error);
     return ok(500, { message: error.message || 'Server error' }, callback);
   }
