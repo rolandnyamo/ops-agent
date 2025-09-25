@@ -6,6 +6,7 @@ import {
   createTranslation,
   listTranslations,
   getTranslationDownloadUrl,
+  deleteTranslation,
   inferDoc,
   type TranslationItem
 } from '../../lib/api';
@@ -44,6 +45,8 @@ export default function TranslationsPage() {
   const [inferring, setInferring] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ translationId: string; title: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [form, setForm] = useState({
@@ -218,6 +221,31 @@ export default function TranslationsPage() {
     setOpenDropdown(openDropdown === translationId ? null : translationId);
   }
 
+  function showDeleteConfirm(translationId: string, title: string) {
+    setDeleteConfirm({ translationId, title });
+  }
+
+  function closeDeleteModal() {
+    setDeleteConfirm(null);
+  }
+
+  async function confirmDelete() {
+    if (!deleteConfirm) return;
+    
+    setDeleting(true);
+    try {
+      await deleteTranslation(deleteConfirm.translationId);
+      setNotice('Translation deleted successfully');
+      // Remove from local state
+      setItems(prev => prev.filter(item => item.translationId !== deleteConfirm.translationId));
+      setDeleteConfirm(null);
+    } catch (err: any) {
+      setError(err.message || 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const onFileChange = async () => {
     const file = fileRef.current?.files?.[0];
     await handleFileSelection(file || null);
@@ -389,6 +417,30 @@ export default function TranslationsPage() {
                           </div>
                         )}
                       </div>
+                      <button
+                        className="btn ghost mini"
+                        onClick={() => showDeleteConfirm(item.translationId, item.title || item.originalFilename)}
+                        disabled={deleting}
+                        style={{ 
+                          padding: '6px 8px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        <svg 
+                          viewBox="0 0 24 24" 
+                          fill="none" 
+                          stroke="currentColor" 
+                          strokeWidth="1.5"
+                          style={{ width: '16px', height: '16px' }}
+                        >
+                          <polyline points="3,6 5,6 21,6" />
+                          <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2" />
+                          <line x1="10" y1="11" x2="10" y2="17" />
+                          <line x1="14" y1="11" x2="14" y2="17" />
+                        </svg>
+                      </button>
                       <Link className="btn mini" href={`/translations/${item.translationId}`}>
                         {item.status === 'READY_FOR_REVIEW' || item.status === 'APPROVED' ? 'Review' : 'Details'}
                       </Link>
@@ -403,10 +455,26 @@ export default function TranslationsPage() {
 
       {showModal && (
         <div className="modal-backdrop" onClick={closeModal}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div 
+            className="modal" 
+            onClick={e => e.stopPropagation()}
+            style={{ 
+              background: '#0f172a',
+              color: '#f8fafc'
+            }}
+          >
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ margin: 0 }}>New translation</h3>
-              <button className="btn ghost mini" onClick={closeModal}>Close</button>
+              <h3 style={{ margin: 0, color: '#f8fafc' }}>New translation</h3>
+              <button 
+                className="btn ghost mini" 
+                onClick={closeModal}
+                style={{ 
+                  color: '#cbd5e1',
+                  borderColor: 'rgba(148, 163, 184, 0.4)'
+                }}
+              >
+                Close
+              </button>
             </div>
 
             <div
@@ -448,13 +516,29 @@ export default function TranslationsPage() {
             </div>
 
             {selectedFile && (
-              <div className="chip" style={{ marginBottom: 16 }}>
+              <div 
+                className="chip" 
+                style={{ 
+                  marginBottom: 16,
+                  background: 'rgba(59, 130, 246, 0.1)',
+                  borderColor: 'rgba(59, 130, 246, 0.3)',
+                  color: '#93c5fd'
+                }}
+              >
                 Selected: {selectedFile.name}
               </div>
             )}
 
             {inferring && (
-              <div className="chip" style={{ marginBottom: 16, background: 'rgba(14,116,144,.1)', borderColor: 'var(--accent)' }}>
+              <div 
+                className="chip" 
+                style={{ 
+                  marginBottom: 16, 
+                  background: 'rgba(14,116,144,.2)', 
+                  borderColor: 'rgba(14,116,144,.4)',
+                  color: '#67e8f9'
+                }}
+              >
                 Analysing document metadata…
               </div>
             )}
@@ -465,26 +549,41 @@ export default function TranslationsPage() {
                 placeholder="Title"
                 value={form.title}
                 onChange={e => setForm({ ...form, title: e.target.value })}
-                style={{ flex: 2 }}
+                style={{ 
+                  flex: 2,
+                  background: 'rgba(148, 163, 184, 0.1)',
+                  border: '1px solid rgba(148, 163, 184, 0.3)',
+                  color: '#f8fafc'
+                }}
               />
               <select
                 className="input"
                 value={form.sourceLanguage}
                 onChange={e => setForm({ ...form, sourceLanguage: e.target.value })}
-                style={{ flex: 1 }}
+                style={{ 
+                  flex: 1,
+                  background: 'rgba(148, 163, 184, 0.1)',
+                  border: '1px solid rgba(148, 163, 184, 0.3)',
+                  color: '#f8fafc'
+                }}
               >
                 {LANG_OPTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  <option key={opt.value} value={opt.value} style={{ background: '#1e293b', color: '#f8fafc' }}>{opt.label}</option>
                 ))}
               </select>
               <select
                 className="input"
                 value={form.targetLanguage}
                 onChange={e => setForm({ ...form, targetLanguage: e.target.value })}
-                style={{ flex: 1 }}
+                style={{ 
+                  flex: 1,
+                  background: 'rgba(148, 163, 184, 0.1)',
+                  border: '1px solid rgba(148, 163, 184, 0.3)',
+                  color: '#f8fafc'
+                }}
               >
                 {LANG_OPTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  <option key={opt.value} value={opt.value} style={{ background: '#1e293b', color: '#f8fafc' }}>{opt.label}</option>
                 ))}
               </select>
             </div>
@@ -495,18 +594,92 @@ export default function TranslationsPage() {
               rows={3}
               value={form.description}
               onChange={e => setForm({ ...form, description: e.target.value })}
-              style={{ marginBottom: 20 }}
+              style={{ 
+                marginBottom: 20,
+                background: 'rgba(148, 163, 184, 0.1)',
+                border: '1px solid rgba(148, 163, 184, 0.3)',
+                color: '#f8fafc'
+              }}
             />
 
-            <button className="btn" onClick={startTranslation} disabled={busy || !selectedFile}>
+            <button 
+              className="btn" 
+              onClick={startTranslation} 
+              disabled={busy || !selectedFile}
+              style={{
+                background: '#3b82f6',
+                color: 'white',
+                border: '1px solid #3b82f6'
+              }}
+            >
               {busy ? 'Submitting…' : 'Start translation'}
             </button>
 
             {!selectedFile && (
-              <div className="muted mini" style={{ marginTop: 12 }}>
+              <div className="muted mini" style={{ marginTop: 12, color: '#94a3b8' }}>
                 Select a file to enable translation.
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {deleteConfirm && (
+        <div className="modal-backdrop" onClick={closeDeleteModal}>
+          <div 
+            className="modal" 
+            onClick={e => e.stopPropagation()} 
+            style={{ 
+              maxWidth: '480px',
+              background: '#0f172a',
+              color: '#f8fafc'
+            }}
+          >
+            <div style={{ marginBottom: 20 }}>
+              <h3 style={{ margin: 0, marginBottom: 8, color: '#ef4444' }}>Delete Translation</h3>
+              <p style={{ margin: 0, color: '#cbd5e1' }}>
+                Are you sure you want to delete this translation? This action cannot be undone.
+              </p>
+            </div>
+
+            <div 
+              style={{ 
+                marginBottom: 20, 
+                padding: 16, 
+                background: 'rgba(148, 163, 184, 0.1)', 
+                border: '1px solid rgba(148, 163, 184, 0.2)',
+                borderRadius: '8px'
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 4, color: '#f8fafc' }}>{deleteConfirm.title}</div>
+              <div style={{ fontSize: '12px', color: '#94a3b8' }}>Translation ID: {deleteConfirm.translationId}</div>
+            </div>
+
+            <div className="row" style={{ gap: 12, justifyContent: 'flex-end' }}>
+              <button 
+                className="btn ghost" 
+                onClick={closeDeleteModal} 
+                disabled={deleting}
+                style={{ 
+                  color: '#cbd5e1',
+                  borderColor: 'rgba(148, 163, 184, 0.4)'
+                }}
+              >
+                Cancel
+              </button>
+              <button 
+                className="btn" 
+                onClick={confirmDelete} 
+                disabled={deleting}
+                style={{ 
+                  background: '#ef4444', 
+                  color: 'white',
+                  border: '1px solid #ef4444'
+                }}
+              >
+                {deleting ? 'Deleting…' : 'Delete Translation'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -523,7 +696,8 @@ export default function TranslationsPage() {
           z-index: 40;
         }
         .modal {
-          background: #fff;
+          background: #0f172a;
+          color: #f8fafc;
           border-radius: 16px;
           padding: 28px;
           max-width: 640px;
@@ -533,6 +707,20 @@ export default function TranslationsPage() {
         .modal .upload-zone .muted,
         .modal .upload-zone .muted.mini {
           color: rgba(248, 250, 252, 0.82);
+        }
+        .modal .input,
+        .modal .textarea {
+          background: rgba(148, 163, 184, 0.1) !important;
+          border: 1px solid rgba(148, 163, 184, 0.3) !important;
+          color: #f8fafc !important;
+        }
+        .modal .input::placeholder,
+        .modal .textarea::placeholder {
+          color: #94a3b8 !important;
+        }
+        .modal .input option {
+          background: #1e293b !important;
+          color: #f8fafc !important;
         }
       `}</style>
     </Layout>

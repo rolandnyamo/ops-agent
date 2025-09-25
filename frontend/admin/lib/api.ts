@@ -209,6 +209,15 @@ export async function getTranslationDownloadUrl(translationId: string, type: 'or
   return res.json() as Promise<{ url: string; key: string }>;
 }
 
+export async function deleteTranslation(translationId: string){
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}`, {
+    method: 'DELETE',
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`delete translation ${res.status}`);
+  return res.json() as Promise<{ translationId: string; deleted: boolean }>;
+}
+
 // Infer API
 export async function inferSettings(useCase: string){
   const res = await fetch(`${cfg.apiBase}/infer?mode=settings`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ useCase }) });

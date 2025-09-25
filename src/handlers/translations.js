@@ -1,5 +1,5 @@
-const { DynamoDBClient, QueryCommand, GetItemCommand, PutItemCommand, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
-const { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { DynamoDBClient, QueryCommand, GetItemCommand, PutItemCommand, UpdateItemCommand, DeleteItemCommand } = require('@aws-sdk/client-dynamodb');
+const { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { EventBridgeClient, PutEventsCommand } = require('@aws-sdk/client-eventbridge');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
@@ -305,6 +305,59 @@ async function handleDownload(translationId, ownerId, type) {
   return { url, key };
 }
 
+async function deleteS3Object(key) {
+  if (!key) return;
+  try {
+    await s3.send(new DeleteObjectCommand({ Bucket: RAW_BUCKET, Key: key }));
+    console.log('deleted S3 object', { key });
+  } catch (err) {
+    console.warn('failed to delete S3 object', { key, error: err.message });
+  }
+}
+
+async function handleDelete(translationId, ownerId) {
+  const item = await getTranslation(translationId, ownerId);
+  if (!item) {
+    throw new Error('Translation not found');
+  }
+
+  // Delete all S3 assets associated with this translation
+  const keysToDelete = [
+    item.originalFileKey,
+    item.machineFileKey,
+    item.chunkFileKey,
+    item.translatedFileKey,
+    item.translatedHtmlKey
+  ].filter(Boolean);
+
+  // Also delete any files in the translation's directory
+  const translationPrefix = `translations/raw/${ownerId}/${translationId}/`;
+  const machinePrefix = `translations/machine/${ownerId}/${translationId}`;
+  const chunksPrefix = `translations/chunks/${ownerId}/${translationId}`;
+  const outputPrefix = `translations/output/${ownerId}/${translationId}`;
+
+  // Delete specific keys
+  await Promise.all(keysToDelete.map(key => deleteS3Object(key)));
+
+  // Delete common pattern files
+  await Promise.all([
+    deleteS3Object(`${machinePrefix}.html`),
+    deleteS3Object(`${machinePrefix}.json`),
+    deleteS3Object(`${chunksPrefix}.json`),
+    deleteS3Object(`${outputPrefix}.html`),
+    deleteS3Object(`${outputPrefix}.docx`)
+  ]);
+
+  // Delete DynamoDB record
+  await ddb.send(new DeleteItemCommand({
+    TableName: DOCS_TABLE,
+    Key: marshall({ PK: `TRANSLATION#${translationId}`, SK: `TRANSLATION#${ownerId}` })
+  }));
+
+  console.log('deleted translation', { translationId, ownerId, deletedKeys: keysToDelete.length });
+  return { translationId, deleted: true };
+}
+
 exports.handler = async (event, context, callback) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
@@ -408,6 +461,12 @@ exports.handler = async (event, context, callback) => {
       await updateTranslation(translationId, ownerId, patch);
       const updated = await getTranslation(translationId, ownerId);
       return ok(200, updated, callback);
+    }
+
+    if (method === 'DELETE') {
+      console.log('delete translation', { translationId });
+      const result = await handleDelete(translationId, ownerId);
+      return ok(200, result, callback);
     }
 
     return ok(405, { message: 'Method not allowed' }, callback);

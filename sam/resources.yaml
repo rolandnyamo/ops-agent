@@ -490,6 +490,12 @@ Resources:
             RestApiId: !Ref Api
             Path: /translations/{translationId}/download
             Method: GET
+        DeleteTranslation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}
+            Method: DELETE
 
   TranslationWorkerFn:
     Type: AWS::Serverless::Function
