@@ -414,6 +414,12 @@ Resources:
       FunctionName: !Sub "${ProjectName}-${Stage}-translations"
       CodeUri: ../src
       Handler: handlers/translations.handler
+      Environment:
+        Variables:
+          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
+          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+          TRANSLATION_PROVIDER: openai
+          TRANSLATION_MODEL: gpt-4o-mini
       Policies:
         - Statement:
             - Effect: Allow
@@ -493,12 +499,24 @@ Resources:
       Handler: handlers/translationWorker.handler
       Timeout: 180
       MemorySize: 1024
+      Environment:
+        Variables:
+          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
+          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+          TRANSLATION_PROVIDER: openai
+          TRANSLATION_MODEL: gpt-4o-mini
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - dynamodb:*
               Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource:
+                - "*"
         - S3ReadPolicy:
             BucketName: '*'
         - S3WritePolicy:
@@ -576,7 +594,7 @@ Resources:
               Action:
                 - ssm:GetParameter
               Resource:
-                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/openai/key"
+                - "*"
         - Statement:
             - Effect: Allow
               Action:

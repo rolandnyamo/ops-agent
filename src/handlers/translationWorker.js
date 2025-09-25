@@ -67,6 +67,7 @@ exports.handler = async (event) => {
   }
 
   try {
+    console.log('translationWorker start', { translationId, ownerId, detail });
     const item = await getTranslationItem(translationId, ownerId);
     const originalKey = item.originalFileKey;
     if (!RAW_BUCKET || !originalKey) {
@@ -135,6 +136,7 @@ exports.handler = async (event) => {
       provider: engine.name,
       model: engine.model
     });
+    console.log('translationWorker completed', { translationId, chunkKey, machineKey, chunkCount: chunks.length });
   } catch (error) {
     console.error('translationWorker failed', error);
     try {

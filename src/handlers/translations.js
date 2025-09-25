@@ -300,19 +300,23 @@ exports.handler = async (event, context, callback) => {
   const reviewer = reviewerFrom(event);
 
   try {
+    console.log('translations handler request', { method, path, ownerId, query: event?.queryStringParameters, bodyLength: event?.body ? String(event.body).length : 0 });
     if (method === 'POST' && path.endsWith('/translations/upload-url')) {
       const body = parseBody(event);
+      console.log('generate upload url', { ownerId, filename: body.filename, contentType: body.contentType });
       const result = await generateUploadUrl(body, ownerId);
       return ok(200, result, callback);
     }
 
     if (method === 'POST' && path.endsWith('/translations')) {
       const body = parseBody(event);
+      console.log('create translation request', { ownerId, translationId: body.translationId, fileKey: body.fileKey });
       const item = await createTranslation(body, ownerId, reviewer);
       return ok(201, item, callback);
     }
 
     if (method === 'GET' && path.endsWith('/translations')) {
+      console.log('list translations', { ownerId });
       const items = await listTranslations(ownerId);
       return ok(200, { items }, callback);
     }
@@ -328,22 +332,26 @@ exports.handler = async (event, context, callback) => {
       if (!item?.chunkFileKey) {
         return ok(404, { message: 'No chunks found' }, callback);
       }
+      console.log('fetching chunks', { translationId, chunkFileKey: item.chunkFileKey });
       const chunkData = await loadChunks(item.chunkFileKey);
       return ok(200, chunkData, callback);
     }
 
     if (method === 'PUT' && path.endsWith('/chunks')) {
+      console.log('update chunks', { translationId });
       const data = await handleChunkUpdate(event, translationId, ownerId, reviewer);
       return ok(200, data, callback);
     }
 
     if (method === 'POST' && path.endsWith('/approve')) {
+      console.log('approve translation', { translationId });
       const result = await handleApprove(translationId, ownerId, reviewer);
       return ok(200, result, callback);
     }
 
     if (method === 'GET' && path.endsWith('/download')) {
       const type = event?.queryStringParameters?.type || 'original';
+      console.log('download request', { translationId, type });
       const res = await handleDownload(translationId, ownerId, type);
       return ok(200, res, callback);
     }

@@ -297,7 +297,12 @@ export default function TranslationsPage() {
               onDragOver={prevent}
               onDragEnter={prevent}
               onClick={() => fileRef.current?.click()}
-              style={{ marginBottom: 20 }}
+              style={{
+                marginBottom: 20,
+                background: '#0f172a',
+                color: '#f8fafc',
+                borderColor: 'rgba(148, 163, 184, 0.4)'
+              }}
             >
               <div className="upload-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
