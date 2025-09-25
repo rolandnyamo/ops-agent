@@ -16,6 +16,8 @@
     "@aws-sdk/util-dynamodb": "^3.649.0",
     "aws-jwt-verify": "^5.1.0",
     "mammoth": "^1.6.0",
+    "node-html-parser": "^7.0.0",
+    "html-docx-js": "^0.3.1",
     "openai": "^4.0.0",
     "pdf-parse": "^1.1.1",
     "zod": "^3.23.8"

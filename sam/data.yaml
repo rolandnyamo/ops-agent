@@ -44,6 +44,7 @@ Resources:
           Projection:
             ProjectionType: ALL
 
+
   SettingsTable:
     Type: AWS::DynamoDB::Table
     Properties:

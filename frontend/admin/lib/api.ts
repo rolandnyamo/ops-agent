@@ -106,6 +106,109 @@ export async function deleteDoc(docId: string, agentId?: string){
   return res.json() as Promise<{ ok: boolean }>;
 }
 
+// Translation API
+export type TranslationItem = {
+  PK: string;
+  SK: string;
+  SK1?: string;
+  translationId: string;
+  ownerId: string;
+  title: string;
+  description?: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  status: 'PROCESSING' | 'READY_FOR_REVIEW' | 'APPROVED' | 'FAILED';
+  originalFilename?: string;
+  originalFileKey?: string;
+  machineFileKey?: string;
+  translatedFileKey?: string;
+  translatedHtmlKey?: string;
+  provider?: string;
+  model?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  translatedAt?: string;
+  approvedAt?: string;
+  errorMessage?: string;
+};
+
+export type TranslationChunk = {
+  id: string;
+  order: number;
+  sourceHtml: string;
+  sourceText?: string;
+  machineHtml?: string;
+  reviewerHtml?: string;
+  lastUpdatedBy?: string;
+  lastUpdatedAt?: string;
+  reviewerName?: string;
+};
+
+export async function createTranslationUploadUrl(filename: string, contentType: string){
+  const res = await fetch(`${cfg.apiBase}/translations/upload-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ filename, contentType })
+  });
+  if (!res.ok) throw new Error(`translation upload-url ${res.status}`);
+  return res.json() as Promise<{ ownerId: string; translationId: string; uploadUrl: string; fileKey: string; contentType: string; filename: string }>;
+}
+
+export async function createTranslation(payload: { translationId: string; fileKey: string; originalFilename: string; title?: string; description?: string; sourceLanguage: string; targetLanguage: string; }){
+  const res = await fetch(`${cfg.apiBase}/translations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error(`create translation ${res.status}`);
+  return res.json() as Promise<TranslationItem>;
+}
+
+export async function listTranslations(){
+  const res = await fetch(`${cfg.apiBase}/translations`, { headers: { ...(await authHeader()) } });
+  if (!res.ok) throw new Error(`list translations ${res.status}`);
+  return res.json() as Promise<{ items: TranslationItem[] }>;
+}
+
+export async function getTranslation(translationId: string){
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}`, { headers: { ...(await authHeader()) } });
+  if (!res.ok) throw new Error(`get translation ${res.status}`);
+  return res.json() as Promise<TranslationItem>;
+}
+
+export async function getTranslationChunks(translationId: string){
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/chunks`, { headers: { ...(await authHeader()) } });
+  if (!res.ok) throw new Error(`get translation chunks ${res.status}`);
+  return res.json() as Promise<{ chunks: TranslationChunk[]; headHtml?: string; sourceLanguage?: string; targetLanguage?: string }>;
+}
+
+export async function updateTranslationChunks(translationId: string, chunks: Array<{ id: string; reviewerHtml: string; }>){
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/chunks`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ chunks })
+  });
+  if (!res.ok) throw new Error(`update translation chunks ${res.status}`);
+  return res.json() as Promise<{ chunks: TranslationChunk[] }>;
+}
+
+export async function approveTranslation(translationId: string){
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/approve`, {
+    method: 'POST',
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`approve translation ${res.status}`);
+  return res.json() as Promise<{ status: string; translatedFileKey?: string }>;
+}
+
+export async function getTranslationDownloadUrl(translationId: string, type: 'original' | 'machine' | 'translated' | 'translatedHtml' = 'original'){
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/download?type=${encodeURIComponent(type)}`, {
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`download translation ${res.status}`);
+  return res.json() as Promise<{ url: string; key: string }>;
+}
+
 // Infer API
 export async function inferSettings(useCase: string){
   const res = await fetch(`${cfg.apiBase}/infer?mode=settings`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ useCase }) });
@@ -116,7 +219,7 @@ export async function inferSettings(useCase: string){
 export async function inferDoc(filename: string, sampleText: string, categories?: string[]){
   const res = await fetch(`${cfg.apiBase}/infer?mode=doc`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeader()) }, body: JSON.stringify({ filename, sampleText, categories }) });
   if (!res.ok) throw new Error(`infer doc ${res.status}`);
-  return res.json() as Promise<{ title: string; category: string; audience: string; year: number|string; version: string; description: string } >;
+  return res.json() as Promise<{ title: string; category: string; audience: string; year: number|string; version: string; description: string; language?: string } >;
 }
 
 export async function ask(q: string, agentId?: string, filter?: string, debug?: boolean){

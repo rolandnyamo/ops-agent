@@ -11,6 +11,18 @@
   "UploadUrlFn": {
     "RAW_BUCKET": "ops-agent-prod-raw-326445141506-us-east-1"
   },
+  "TranslationsFn": {
+    "DOCS_TABLE": "ops-agent-prod-docs",
+    "RAW_BUCKET": "ops-agent-prod-raw-326445141506-us-east-1",
+    "TRANSLATION_PROVIDER": "openai",
+    "TRANSLATION_MODEL": "gpt-4o-mini"
+  },
+  "TranslationWorkerFn": {
+    "DOCS_TABLE": "ops-agent-prod-docs",
+    "RAW_BUCKET": "ops-agent-prod-raw-326445141506-us-east-1",
+    "TRANSLATION_PROVIDER": "openai",
+    "TRANSLATION_MODEL": "gpt-4o-mini"
+  },
   "SettingsFn": {
     "SETTINGS_TABLE": "ops-agent-prod-settings"
   },

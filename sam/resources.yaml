@@ -42,6 +42,8 @@ Globals:
         VECTOR_INDEX: 'docs'  # This will be overridden by the actual import value in the function definition
         VECTOR_MODE: s3vectors
         VECTOR_DIMENSION: '1536'
+        TRANSLATION_PROVIDER: openai
+        TRANSLATION_MODEL: gpt-4o-mini
 
 Resources:
   Api:
@@ -405,6 +407,121 @@ Resources:
             RestApiId: !Ref Api
             Path: /docs/{docId}
             Method: DELETE
+
+  TranslationsFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-translations"
+      CodeUri: ../src
+      Handler: handlers/translations.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource: "*"
+        - S3ReadPolicy:
+            BucketName: '*'
+        - S3WritePolicy:
+            BucketName: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: '*'
+      Events:
+        PostTranslationUploadUrl:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/upload-url
+            Method: POST
+        ListTranslations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations
+            Method: GET
+        CreateTranslation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations
+            Method: POST
+        GetTranslation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}
+            Method: GET
+        UpdateTranslation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}
+            Method: PUT
+        GetTranslationChunks:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/chunks
+            Method: GET
+        UpdateTranslationChunks:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/chunks
+            Method: PUT
+        ApproveTranslation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/approve
+            Method: POST
+        DownloadTranslation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/download
+            Method: GET
+
+  TranslationWorkerFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-translation-worker"
+      CodeUri: ../src
+      Handler: handlers/translationWorker.handler
+      Timeout: 180
+      MemorySize: 1024
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource: '*'
+        - S3ReadPolicy:
+            BucketName: '*'
+        - S3WritePolicy:
+            BucketName: '*'
+
+  TranslationEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-${Stage}-translation-requested"
+      EventPattern:
+        source: ["ops-agent"]
+        detail-type: ["TranslationRequested"]
+      Targets:
+        - Arn: !GetAtt TranslationWorkerFn.Arn
+          Id: TranslationWorkerTarget
+
+  TranslationWorkerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TranslationWorkerFn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TranslationEventRule.Arn
 
   ViewDocFn:
     Type: AWS::Serverless::Function
