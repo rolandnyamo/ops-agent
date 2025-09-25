@@ -319,6 +319,12 @@ exports.handler = async (event, context, callback) => {
 
   try {
     console.log('translations handler request', { method, path, ownerId, query: event?.queryStringParameters, bodyLength: event?.body ? String(event.body).length : 0 });
+    console.log('full event path info', { 
+      path, 
+      pathParameters: event?.pathParameters,
+      rawPath: event?.rawPath,
+      resource: event?.resource 
+    });
     if (method === 'POST' && path.endsWith('/translations/upload-url')) {
       const body = parseBody(event);
       console.log('generate upload url', { ownerId, filename: body.filename, contentType: body.contentType });
@@ -339,11 +345,23 @@ exports.handler = async (event, context, callback) => {
       return ok(200, { items }, callback);
     }
 
-    const match = path.match(/\/translations\/(\w[\w-]+)/);
-    if (!match) {
-      return ok(404, { message: 'Not found' }, callback);
+    // Try to extract translationId from path parameters first, then fall back to regex
+    let translationId = event?.pathParameters?.translationId;
+    if (!translationId) {
+      const match = path.match(/\/translations\/([^\/]+)/);
+      if (!match) {
+        return ok(404, { message: 'Not found' }, callback);
+      }
+      translationId = match[1];
     }
-    const translationId = match[1];
+    
+    // Skip if we got the literal path parameter placeholder
+    if (translationId === '{translationId}') {
+      console.log('Got literal path parameter placeholder, skipping');
+      return ok(404, { message: 'Translation ID not provided' }, callback);
+    }
+    
+    console.log('extracted translationId', { translationId });
 
     if (method === 'GET' && path.endsWith('/chunks')) {
       const item = await getTranslation(translationId, ownerId);
