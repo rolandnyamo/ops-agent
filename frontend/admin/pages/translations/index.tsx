@@ -43,6 +43,7 @@ export default function TranslationsPage() {
   const [busy, setBusy] = useState(false);
   const [inferring, setInferring] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [form, setForm] = useState({
@@ -75,6 +76,20 @@ export default function TranslationsPage() {
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      // Check if the click is outside any dropdown
+      const target = event.target as Element;
+      if (!target.closest('[data-dropdown]')) {
+        setOpenDropdown(null);
+      }
+    }
+    if (openDropdown) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [openDropdown]);
 
   useEffect(() => {
     if (!notice) return;
@@ -188,13 +203,19 @@ export default function TranslationsPage() {
     }
   }
 
-  async function download(translationId: string, type: 'original' | 'machine' | 'translated' | 'translatedHtml') {
+  async function download(translationId: string, type: 'original' | 'translatedHtml') {
     try {
       const { url } = await getTranslationDownloadUrl(translationId, type);
       if (url) window.open(url, '_blank');
+      setOpenDropdown(null); // Close dropdown after download
     } catch (err: any) {
       setError(err.message || 'Download failed');
+      setOpenDropdown(null);
     }
+  }
+
+  function toggleDropdown(translationId: string) {
+    setOpenDropdown(openDropdown === translationId ? null : translationId);
   }
 
   const onFileChange = async () => {
@@ -278,10 +299,96 @@ export default function TranslationsPage() {
                   <td>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '—'}</td>
                   <td>
                     <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
-                      <button className="btn ghost mini" onClick={() => download(item.translationId, 'original')}>Original</button>
-                      <button className="btn ghost mini" onClick={() => download(item.translationId, item.status === 'APPROVED' ? 'translated' : 'machine')}>
-                        {item.status === 'APPROVED' ? 'Final' : 'Machine'}
-                      </button>
+                      <div style={{ position: 'relative' }} data-dropdown>
+                        <button 
+                          className="btn mini" 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleDropdown(item.translationId);
+                          }}
+                          style={{ 
+                            padding: '6px 8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                        >
+                          <svg 
+                            viewBox="0 0 24 24" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            strokeWidth="1.5"
+                            style={{ width: '16px', height: '16px' }}
+                          >
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7,10 12,15 17,10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                        </button>
+                        {openDropdown === item.translationId && (
+                          <div 
+                            style={{
+                              position: 'absolute',
+                              top: '100%',
+                              right: 0,
+                              background: 'white',
+                              border: '1px solid #ddd',
+                              borderRadius: '4px',
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                              zIndex: 1000,
+                              minWidth: '150px'
+                            }}
+                          >
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                download(item.translationId, 'original');
+                              }}
+                              style={{ 
+                                width: '100%', 
+                                textAlign: 'left', 
+                                border: 'none',
+                                background: 'transparent',
+                                padding: '8px 12px',
+                                cursor: 'pointer',
+                                fontSize: '14px'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = '#f5f5f5';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = 'transparent';
+                              }}
+                            >
+                              Original
+                            </button>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                download(item.translationId, 'translatedHtml');
+                              }}
+                              style={{ 
+                                width: '100%', 
+                                textAlign: 'left', 
+                                border: 'none',
+                                borderTop: '1px solid #eee',
+                                background: 'transparent',
+                                padding: '8px 12px',
+                                cursor: 'pointer',
+                                fontSize: '14px'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = '#f5f5f5';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = 'transparent';
+                              }}
+                            >
+                              Translation .html
+                            </button>
+                          </div>
+                        )}
+                      </div>
                       <Link className="btn mini" href={`/translations/${item.translationId}`}>
                         {item.status === 'READY_FOR_REVIEW' || item.status === 'APPROVED' ? 'Review' : 'Details'}
                       </Link>
