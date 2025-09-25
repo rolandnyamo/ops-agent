@@ -18,6 +18,25 @@ const VECTOR_BUCKET = process.env.VECTOR_BUCKET;
 const VECTOR_INDEX = process.env.VECTOR_INDEX || 'docs';
 const SETTINGS_TABLE = process.env.SETTINGS_TABLE;
 
+const FORMAT_DIRECTIVES = {
+  html: [
+    'You are responsible for returning the final answer as production-ready HTML.',
+    'Always respond with a valid HTML fragment that can be embedded directly into a page.',
+    'Use semantic tags such as <p>, <ul>, <ol>, <table>, <code>, and <strong> to organize information and emphasize key details.',
+    'Do not include <html>, <head>, <body>, <script>, or <style> elements.',
+    'Do not return markdown, backticks, or commentary outside of the HTML.',
+    'Only return the HTML for the answer.'
+  ].join('\n'),
+  markdown: [
+    'Respond using GitHub-flavored Markdown.',
+    'Do not include raw HTML unless necessary for Markdown syntax.'
+  ].join('\n'),
+  text: [
+    'Respond with plain text only.',
+    'Do not include markdown or HTML.'
+  ].join('\n')
+};
+
 const ddb = new DynamoDBClient({});
 
 async function getAgentSettings(agentId) {
@@ -178,15 +197,19 @@ function toHtml(rawAnswer) {
   return htmlParts.join('');
 }
 
-function formatAnswer(rawAnswer, format) {
+function formatAnswer(rawAnswer, format, options = {}) {
   const safeAnswer = typeof rawAnswer === 'string' ? rawAnswer : '';
+  const answerSource = options.answerSource || 'fallback';
+
   switch (format) {
     case 'text':
-      return safeAnswer;
     case 'markdown':
       return safeAnswer;
     case 'html':
     default:
+      if (answerSource === 'llm') {
+        return safeAnswer;
+      }
       return toHtml(safeAnswer);
   }
 }
@@ -375,6 +398,7 @@ exports.handler = async (event, context, callback) => {
   }));
 
   let rawAnswer;
+  let answerSource = 'fallback';
   let aiPrompt = null;
   const aiStartTime = Date.now();
 
@@ -382,7 +406,7 @@ exports.handler = async (event, context, callback) => {
     const snippets = results.map(r => r.text).filter(Boolean).slice(0,3).join('\n\n');
 
     // Use the system prompt from agent settings
-    const systemPrompt = agentSettings.systemPrompt || `You are a helpful assistant that provides concise, well-formatted answers based on documentation. 
+    const systemPrompt = agentSettings.systemPrompt || `You are a helpful assistant that provides concise, well-formatted answers based on documentation.
 
 Guidelines:
 - Keep answers brief and to the point
@@ -401,13 +425,22 @@ Question: ${q}
 
 Provide a concise, well-formatted answer based on the above context.`;
 
-    aiPrompt = { systemPrompt, userPrompt };
+    const baseDirective = FORMAT_DIRECTIVES[responseFormat] || FORMAT_DIRECTIVES.html;
+    const systemMessages = [
+      { role: 'system', content: baseDirective }
+    ];
+
+    if (systemPrompt) {
+      systemMessages.push({ role: 'system', content: systemPrompt });
+    }
+
+    aiPrompt = { baseDirective, systemPrompt, userPrompt };
 
     try {
       const response = await generateText({
         model: 'gpt-3.5-turbo',
         input: [
-          { role: 'system', content: systemPrompt },
+          ...systemMessages,
           { role: 'user', content: userPrompt }
         ],
         additionalParams: {
@@ -416,7 +449,12 @@ Provide a concise, well-formatted answer based on the above context.`;
         }
       });
 
-      rawAnswer = response.success ? response.text : `Based on your sources:\n\n${snippets}`;
+      if (response.success && typeof response.text === 'string') {
+        rawAnswer = response.text;
+        answerSource = 'llm';
+      } else {
+        rawAnswer = `Based on your sources:\n\n${snippets}`;
+      }
     } catch (error) {
       // Fallback to raw snippets if AI fails
       rawAnswer = `Based on your sources:\n\n${snippets}`;
@@ -429,7 +467,7 @@ Provide a concise, well-formatted answer based on the above context.`;
   const aiTime = Date.now() - aiStartTime;
   const totalTime = Date.now() - startTime;
 
-  const formattedAnswer = formatAnswer(rawAnswer, responseFormat);
+  const formattedAnswer = formatAnswer(rawAnswer, responseFormat, { answerSource });
 
   const responseBody = {
     answer: formattedAnswer,
@@ -492,6 +530,7 @@ Provide a concise, well-formatted answer based on the above context.`;
 
     if (aiPrompt) {
       responseBody.debug.aiProcessing = {
+        baseDirective: aiPrompt.baseDirective,
         systemPrompt: aiPrompt.systemPrompt,
         userPrompt: aiPrompt.userPrompt,
         snippetsUsed: results.map(r => r.text).filter(Boolean).length,
