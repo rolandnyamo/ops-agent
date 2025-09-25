@@ -25,6 +25,19 @@ async function putObject(bucket, key, body, contentType) {
   await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }));
 }
 
+async function failTranslation({ translationId, ownerId, errorMessage, context }) {
+  console.error('translationWorker failure', { translationId, ownerId, errorMessage, context });
+  try {
+    await updateTranslationItem(translationId, ownerId, {
+      status: 'FAILED',
+      errorMessage: errorMessage?.slice(0, 2000) || 'Translation failed',
+      errorContext: context ? JSON.stringify(context).slice(0, 4000) : undefined
+    });
+  } catch (inner) {
+    console.error('translationWorker failed to persist error state', inner);
+  }
+}
+
 async function getTranslationItem(translationId, ownerId = 'default') {
   const key = { PK: `TRANSLATION#${translationId}`, SK: `TRANSLATION#${ownerId}` };
   const res = await ddb.send(new GetItemCommand({ TableName: DOCS_TABLE, Key: marshall(key) }));
@@ -66,29 +79,65 @@ exports.handler = async (event) => {
     return;
   }
 
+  if (!RAW_BUCKET) {
+    await failTranslation({ translationId, ownerId, errorMessage: 'RAW_BUCKET not configured' });
+    return;
+  }
+
+  if (!DOCS_TABLE) {
+    await failTranslation({ translationId, ownerId, errorMessage: 'DOCS_TABLE not configured' });
+    return;
+  }
+
   try {
     console.log('translationWorker start', { translationId, ownerId, detail });
     const item = await getTranslationItem(translationId, ownerId);
     const originalKey = item.originalFileKey;
-    if (!RAW_BUCKET || !originalKey) {
-      throw new Error('Missing RAW_BUCKET or original file key');
+    if (!originalKey) {
+      await failTranslation({ translationId, ownerId, errorMessage: 'Original file key missing on translation item', context: item });
+      return;
     }
 
     await updateTranslationItem(translationId, ownerId, { status: 'PROCESSING' });
 
-    const { buffer, contentType } = await readObject(RAW_BUCKET, originalKey);
+    let buffer, contentType;
+    try {
+      ({ buffer, contentType } = await readObject(RAW_BUCKET, originalKey));
+    } catch (readErr) {
+      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to read source document from S3', context: { originalKey, error: readErr.message } });
+      return;
+    }
 
-    const document = await prepareTranslationDocument({
-      buffer,
-      contentType,
-      filename: item.originalFilename || originalKey.split('/').pop() || 'document'
-    });
+    let document;
+    try {
+      document = await prepareTranslationDocument({
+        buffer,
+        contentType,
+        filename: item.originalFilename || originalKey.split('/').pop() || 'document'
+      });
+    } catch (parseErr) {
+      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to prepare translation document', context: { error: parseErr.message } });
+      return;
+    }
 
-    const engine = await getTranslationEngine();
-    const translations = await engine.translate(document.chunks, {
-      sourceLanguage: item.sourceLanguage || 'auto',
-      targetLanguage: item.targetLanguage || 'en'
-    });
+    let engine;
+    try {
+      engine = await getTranslationEngine();
+    } catch (engineErr) {
+      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to initialise translation engine', context: { error: engineErr.message } });
+      return;
+    }
+
+    let translations;
+    try {
+      translations = await engine.translate(document.chunks, {
+        sourceLanguage: item.sourceLanguage || 'auto',
+        targetLanguage: item.targetLanguage || 'en'
+      });
+    } catch (translateErr) {
+      await failTranslation({ translationId, ownerId, errorMessage: 'Translation provider error', context: { error: translateErr.message } });
+      return;
+    }
 
     const chunks = document.chunks.map(chunk => {
       const translated = translations.find(t => t.id === chunk.id) || {};
@@ -118,14 +167,24 @@ exports.handler = async (event) => {
     });
 
     const chunkKey = `translations/chunks/${ownerId}/${translationId}.json`;
-    await putObject(RAW_BUCKET, chunkKey, chunksPayload, 'application/json');
+    try {
+      await putObject(RAW_BUCKET, chunkKey, chunksPayload, 'application/json');
+    } catch (chunkErr) {
+      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to persist translation chunks', context: { chunkKey, error: chunkErr.message } });
+      return;
+    }
 
     const machineHtml = assembleHtmlDocument({
       headHtml: document.headHtml,
       chunks
     });
     const machineKey = `translations/machine/${ownerId}/${translationId}.html`;
-    await putObject(RAW_BUCKET, machineKey, machineHtml, 'text/html');
+    try {
+      await putObject(RAW_BUCKET, machineKey, machineHtml, 'text/html');
+    } catch (htmlErr) {
+      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to persist machine translated HTML', context: { machineKey, error: htmlErr.message } });
+      return;
+    }
 
     await updateTranslationItem(translationId, ownerId, {
       status: 'READY_FOR_REVIEW',
@@ -139,13 +198,6 @@ exports.handler = async (event) => {
     console.log('translationWorker completed', { translationId, chunkKey, machineKey, chunkCount: chunks.length });
   } catch (error) {
     console.error('translationWorker failed', error);
-    try {
-      await updateTranslationItem(translationId, ownerId, {
-        status: 'FAILED',
-        errorMessage: error.message || 'Translation failed'
-      });
-    } catch (inner) {
-      console.error('Failed to update translation status after error', inner);
-    }
+    await failTranslation({ translationId, ownerId, errorMessage: error.message || 'Translation failed', context: error.details || null });
   }
 };

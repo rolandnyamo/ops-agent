@@ -514,6 +514,11 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
+                - s3:*
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
                 - ssm:GetParameter
               Resource:
                 - "*"
