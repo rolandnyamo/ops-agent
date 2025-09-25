@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ask } from '../lib/api';
+import { ask, type AnswerFormat } from '../lib/api';
 
 interface AgentChatProps {
   agentId: string;
@@ -9,6 +9,7 @@ interface ChatMessage {
   id: string;
   question: string;
   answer: string;
+  answerFormat: AnswerFormat;
   confidence: number;
   grounded: boolean;
   citations: Array<{docId: string; chunk: number; score: number}>;
@@ -34,11 +35,12 @@ export default function AgentChat({ agentId }: AgentChatProps) {
 
     try {
       const response = await ask(question, agentId, undefined, debugMode);
-      
+
       const newMessage: ChatMessage = {
         id: Date.now().toString(),
         question,
         answer: response.answer,
+        answerFormat: response.answerFormat || 'html',
         confidence: response.confidence,
         grounded: response.grounded,
         citations: response.citations,
@@ -164,14 +166,16 @@ export default function AgentChat({ agentId }: AgentChatProps) {
               }}>
                 Answer
               </div>
-              <div style={{ 
-                fontSize: '14px',
-                color: 'var(--text)',
-                lineHeight: 1.6,
-                whiteSpace: 'pre-wrap'
-              }}>
-                {message.answer}
-              </div>
+              {message.answerFormat === 'html' ? (
+                <div
+                  style={{ fontSize: '14px', color: 'var(--text)', lineHeight: 1.6 }}
+                  dangerouslySetInnerHTML={{ __html: message.answer }}
+                />
+              ) : (
+                <div style={{ fontSize: '14px', color: 'var(--text)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                  {message.answer}
+                </div>
+              )}
             </div>
 
             {/* Metadata */}
