@@ -1,6 +1,19 @@
 const { parse } = require('node-html-parser');
 const { getOpenAIClient } = require('./openai-client');
 
+function stripWrapperTags(html) {
+  let trimmed = String(html || '').trim();
+  const snippetMatch = trimmed.match(/^<snippet[^>]*>([\s\S]*)<\/snippet>$/i);
+  if (snippetMatch) {
+    trimmed = snippetMatch[1].trim();
+  }
+  const bodyMatch = trimmed.match(/^<html[\s\S]*?<body[^>]*>([\s\S]*)<\/body>[\s\S]*<\/html>$/i);
+  if (bodyMatch) {
+    trimmed = bodyMatch[1].trim();
+  }
+  return trimmed;
+}
+
 class TranslationError extends Error {
   constructor(message, details) {
     super(message);
@@ -72,12 +85,12 @@ function validateStructure(sourceHtml, translatedHtml) {
 async function translateChunkOpenAI({ html, sourceLanguage, targetLanguage, model, attempt = 0 }) {
   const openai = await getOpenAIClient();
   const tagHint = describeTagPath(html);
-  const maxRetries = Number(process.env.TRANSLATION_MAX_RETRIES || 3);
+  const maxRetries = 1;
 
-  const systemPrompt = `You are a professional translator. Translate the incoming HTML snippet from ${sourceLanguage} to ${targetLanguage}. Preserve ALL HTML tags and attributes exactly as provided. Only translate human readable text content. Return valid HTML of the snippet with identical structure.`;
+  const systemPrompt = `You are a professional translator. Translate the incoming HTML snippet from ${sourceLanguage} to ${targetLanguage}. Preserve ALL HTML tags and attributes exactly as provided. Only translate human readable text content. Return valid HTML for the snippet with identical structure. Do not wrap the response in any extra tags or metadata.`;
   const correctivePrompt = attempt > 0
-    ? `IMPORTANT: The snippet uses the following HTML element path: ${tagHint}. The translation must keep the exact same tags and structure. If the snippet is plain text, return only the translated text.`
-    : `The snippet may contain inline tags. Keep them intact.`;
+    ? `IMPORTANT: The snippet uses the following HTML element path: ${tagHint}. The translation must keep the exact same tags and structure. Respond only with the translated snippet content. Do not add wrapper tags such as <snippet> or <html>.`
+    : `The snippet may contain inline tags. Keep them intact and respond only with the translated snippet content.`;
 
   try {
     const resp = await openai.responses.create({
@@ -90,24 +103,15 @@ async function translateChunkOpenAI({ html, sourceLanguage, targetLanguage, mode
       temperature: 0.2
     });
 
-    const out = String(resp.output_text || '').trim();
+    let out = String(resp.output_text || '').trim();
+    out = stripWrapperTags(out);
     if (!out) {
       throw new TranslationError('Empty translation output');
     }
-    if (!validateStructure(html, out)) {
-      if (attempt + 1 >= maxRetries) {
-        throw new TranslationError('Translated snippet altered HTML structure', { attempt, html, out });
-      }
-      return translateChunkOpenAI({ html, sourceLanguage, targetLanguage, model, attempt: attempt + 1 });
-    }
     return out;
   } catch (err) {
-    if (attempt + 1 >= maxRetries) {
-      if (err instanceof TranslationError) throw err;
-      throw new TranslationError(err.message || 'Translation failed', { cause: err });
-    }
-    await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
-    return translateChunkOpenAI({ html, sourceLanguage, targetLanguage, model, attempt: attempt + 1 });
+    if (err instanceof TranslationError) throw err;
+    throw new TranslationError(err.message || 'Translation failed', { cause: err });
   }
 }
 
