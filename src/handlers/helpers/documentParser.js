@@ -1,5 +1,9 @@
-const mammoth = require('mammoth');
-const pdfParse = require('pdf-parse');
+// Import format-specific handlers
+const { parsePDF } = require('./formatHandlers/pdfHandler');
+const { parseWordDocument } = require('./formatHandlers/wordHandler');
+const { parseHTML } = require('./formatHandlers/htmlHandler');
+const { parseText } = require('./formatHandlers/textHandler');
+const { parseOfficeDocument } = require('./formatHandlers/officeHandler');
 const { parse } = require('node-html-parser');
 
 const BLOCK_TAGS = new Set([
@@ -30,32 +34,116 @@ function textToHtml(text) {
   return parts.join('\n');
 }
 
-async function convertBufferToHtml({ buffer, contentType, filename }) {
+/**
+ * Detects document format and routes to appropriate handler
+ */
+function detectDocumentFormat(contentType, filename) {
   const name = String(filename || '').toLowerCase();
   const type = String(contentType || '').toLowerCase();
-
-  if (name.endsWith('.docx') || type.includes('officedocument.wordprocessingml.document')) {
-    const result = await mammoth.convertToHtml({ buffer }, { convertImage: mammoth.images.inline(async () => null) });
-    return normalizeHtml(result.value || '');
-  }
-
+  
+  // PDF files
   if (name.endsWith('.pdf') || type.includes('application/pdf')) {
-    const parsed = await pdfParse(buffer);
-    const htmlBody = textToHtml(parsed.text || '');
-    return normalizeHtml(`<body>${htmlBody}</body>`);
+    return { format: 'pdf', handler: 'pdf' };
   }
-
+  
+  // Microsoft Word documents
+  if (name.endsWith('.docx') || type.includes('officedocument.wordprocessingml.document')) {
+    return { format: 'docx', handler: 'word' };
+  }
+  if (name.endsWith('.doc') || type.includes('application/msword')) {
+    return { format: 'doc', handler: 'word' };
+  }
+  
+  // HTML files
   if (name.endsWith('.html') || name.endsWith('.htm') || type.includes('text/html')) {
-    return normalizeHtml(buffer.toString('utf8'));
+    return { format: 'html', handler: 'html' };
   }
-
-  if (type.startsWith('text/')) {
-    const text = buffer.toString('utf8');
-    const htmlBody = textToHtml(text);
-    return normalizeHtml(`<body>${htmlBody}</body>`);
+  
+  // Text-based files
+  if (name.endsWith('.txt') || name.endsWith('.md') || name.endsWith('.markdown') || 
+      type.startsWith('text/') || type.includes('text/markdown')) {
+    return { format: 'text', handler: 'text' };
   }
+  
+  // Office and data files
+  if (name.endsWith('.rtf')) {
+    return { format: 'rtf', handler: 'office' };
+  }
+  if (name.endsWith('.odt') || type.includes('opendocument.text')) {
+    return { format: 'odt', handler: 'office' };
+  }
+  if (name.endsWith('.csv') || type.includes('text/csv')) {
+    return { format: 'csv', handler: 'office' };
+  }
+  if (name.endsWith('.xml') || type.includes('application/xml') || type.includes('text/xml')) {
+    return { format: 'xml', handler: 'office' };
+  }
+  if (name.endsWith('.json') || type.includes('application/json')) {
+    return { format: 'json', handler: 'office' };
+  }
+  
+  return null;
+}
 
-  throw new Error(`Unsupported content type for translation: ${contentType || 'unknown'}`);
+/**
+ * Enhanced document parsing with intelligent format detection
+ */
+async function parseDocument({ buffer, contentType, filename }) {
+  const formatInfo = detectDocumentFormat(contentType, filename);
+  
+  if (!formatInfo) {
+    throw new Error(`Unsupported content type for parsing: ${contentType || 'unknown'} (filename: ${filename || 'unknown'})`);
+  }
+  
+  try {
+    let result;
+    
+    switch (formatInfo.handler) {
+      case 'pdf':
+        result = await parsePDF(buffer, filename);
+        break;
+      case 'word':
+        result = await parseWordDocument(buffer, contentType, filename);
+        break;
+      case 'html':
+        result = await parseHTML(buffer, filename);
+        break;
+      case 'text':
+        result = await parseText(buffer, contentType, filename);
+        break;
+      case 'office':
+        result = await parseOfficeDocument(buffer, contentType, filename);
+        break;
+      default:
+        throw new Error(`No handler found for format: ${formatInfo.format}`);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error(`Document parsing error for ${filename} (${formatInfo.format}):`, error.message);
+    throw error;
+  }
+}
+
+/**
+ * Legacy function for backward compatibility - converts document to HTML
+ */
+async function convertBufferToHtml({ buffer, contentType, filename }) {
+  try {
+    const result = await parseDocument({ buffer, contentType, filename });
+    
+    // If we have HTML content, use it; otherwise convert text to HTML
+    if (result.html) {
+      return normalizeHtml(result.html);
+    } else if (result.text) {
+      const htmlBody = textToHtml(result.text);
+      return normalizeHtml(`<body>${htmlBody}</body>`);
+    } else {
+      throw new Error('No text or HTML content extracted from document');
+    }
+  } catch (error) {
+    throw new Error(`Document conversion error: ${error.message}`);
+  }
 }
 
 function extractBlocks(html) {
@@ -157,7 +245,17 @@ function assembleHtmlDocument({ headHtml, chunks, reviewer = false }) {
 }
 
 module.exports = {
+  // Main parsing functions
+  parseDocument,
+  convertBufferToHtml,
+  detectDocumentFormat,
+  
+  // Translation-specific functions
   prepareTranslationDocument,
   assembleHtmlDocument,
+  
+  // Utility functions
   normalizeHtml,
+  textToHtml,
+  extractBlocks
 };

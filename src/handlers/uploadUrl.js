@@ -23,10 +23,35 @@ exports.handler = async (event, context, callback) => {
   const agentId = (event?.queryStringParameters?.agentId) || body.agentId || 'default';
   const filename = (body.filename || 'upload.bin').replace(/[^A-Za-z0-9._-]/g, '_');
   const contentType = body.contentType || 'application/octet-stream';
-  const allow = ['text/plain','text/html','application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+  const allow = [
+    // Text formats
+    'text/plain',
+    'text/html',
+    'text/markdown',
+    'text/csv',
+    'text/xml',
+    // PDF
+    'application/pdf',
+    // Microsoft Word
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // DOCX
+    'application/msword', // DOC
+    // Other office formats
+    'application/rtf',
+    'application/vnd.oasis.opendocument.text', // ODT
+    // Data formats
+    'application/json',
+    'application/xml'
+  ];
+  
   if (!allow.includes(contentType)) {
     response.statusCode = 400;
-    response.body = JSON.stringify({ message: `Unsupported contentType ${contentType}` });
+    response.body = JSON.stringify({ 
+      message: `Unsupported contentType ${contentType}`, 
+      supportedFormats: [
+        'PDF', 'Word (DOC/DOCX)', 'HTML', 'Plain Text', 'Markdown', 
+        'RTF', 'ODT', 'CSV', 'XML', 'JSON'
+      ]
+    });
     return callback(null, response);
   }
   const docId = (body.docId && String(body.docId)) || crypto.randomUUID();

@@ -116,7 +116,25 @@ exports.handler = async (event) => {
         filename: item.originalFilename || originalKey.split('/').pop() || 'document'
       });
     } catch (parseErr) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to prepare translation document', context: { error: parseErr.message } });
+      // Provide more specific error messages for common PDF issues
+      let errorMessage = 'Failed to prepare translation document';
+      if (parseErr.message.includes('bad XRef') || 
+          parseErr.message.includes('Invalid PDF') ||
+          parseErr.message.includes('PDF parsing failed')) {
+        errorMessage = 'PDF file appears to be corrupted or invalid. Please try re-uploading the file or ensure the PDF is not password-protected.';
+      } else if (parseErr.message.includes('Unsupported content type')) {
+        errorMessage = 'File format not supported for translation. Please upload a PDF, Word document (DOC/DOCX), HTML, RTF, ODT, or text file.';
+      }
+      
+      await failTranslation({ 
+        translationId, 
+        ownerId, 
+        errorMessage, 
+        context: { 
+          error: parseErr.message,
+          filename: item.originalFilename || originalKey.split('/').pop() || 'document'
+        } 
+      });
       return;
     }
 

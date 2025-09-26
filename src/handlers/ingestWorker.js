@@ -3,6 +3,7 @@ const { S3VectorsClient, PutVectorsCommand, CreateIndexCommand } = require('@aws
 const { DynamoDBClient, UpdateItemCommand, GetItemCommand, PutItemCommand, DeleteItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { response } = require('./helpers/utils');
+const { parseDocument } = require('./helpers/documentParser');
 
 const s3 = new S3Client({});
 const ddb = new DynamoDBClient({});
@@ -350,22 +351,35 @@ exports.handler = async (event, context, callback) => {
 
     const { buffer, contentType } = await readObject(bucket, key);
     let text;
-    if ((contentType || '').includes('text/html') || key.endsWith('.html') || key.endsWith('.htm')) {
-      text = textFromHtml(buffer.toString('utf8'));
-    } else if ((contentType || '').startsWith('text/') || key.endsWith('.txt') || key.endsWith('.md')) {
-      text = buffer.toString('utf8');
-    } else if (key.endsWith('.pdf') || (contentType||'').includes('application/pdf')){
-      const pdfParse = require('pdf-parse');
-      const res = await pdfParse(buffer);
-      text = String(res.text || '').trim();
-    } else if (key.endsWith('.docx') || (contentType||'').includes('application/vnd.openxmlformats-officedocument.wordprocessingml.document')){
-      const mammoth = require('mammoth');
-      const { value } = await mammoth.extractRawText({ buffer });
-      text = String(value||'').trim();
-    } else {
-      await setStatus(docId, agentId, 'FAILED', { error: `Unsupported content type: ${contentType}` });
+    
+    try {
+      // Use centralized document parser
+      const filename = key.split('/').pop() || 'document';
+      const parseResult = await parseDocument({ buffer, contentType, filename });
+      
+      // For ingestion, we need plain text (not HTML)
+      text = parseResult.text || '';
+      
+      // For HTML files, extract text using the existing function for consistency
+      if (parseResult.html && (filename.endsWith('.html') || filename.endsWith('.htm'))) {
+        text = textFromHtml(parseResult.html);
+      }
+      
+      text = String(text).trim();
+      
+      if (!text) {
+        throw new Error('No text content extracted from document');
+      }
+      
+    } catch (parseError) {
+      console.error(`Document parsing failed for ${key}:`, parseError.message);
+      await setStatus(docId, agentId, 'FAILED', { 
+        error: `Document parsing failed: ${parseError.message}`,
+        contentType,
+        filename: key.split('/').pop()
+      });
       response.statusCode = 200;
-      response.body = JSON.stringify({ message: 'Unsupported content type' });
+      response.body = JSON.stringify({ message: 'Document parsing failed', error: parseError.message });
       return callback(null, response);
     }
 

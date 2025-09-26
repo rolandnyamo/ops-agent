@@ -86,14 +86,26 @@ async function generateUploadUrl(body, eventOwner) {
   const filename = sanitizeFilename(body.filename);
   const contentType = String(body.contentType || '').toLowerCase();
   const allow = new Set([
+    // PDF
     'application/pdf',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/msword',
+    // Microsoft Word
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // DOCX
+    'application/msword', // DOC
+    // Text formats
     'text/plain',
-    'text/html'
+    'text/html',
+    'text/markdown',
+    'text/csv',
+    'text/xml',
+    // Other office formats
+    'application/rtf',
+    'application/vnd.oasis.opendocument.text', // ODT
+    // Data formats
+    'application/json',
+    'application/xml'
   ]);
   if (!allow.has(contentType)) {
-    throw new Error(`Unsupported content type ${contentType}`);
+    throw new Error(`Unsupported content type ${contentType}. Supported formats: PDF, Word (DOC/DOCX), HTML, Plain Text, Markdown, RTF, ODT, CSV, XML, JSON`);
   }
 
   const key = `translations/raw/${ownerId}/${translationId}/${filename}`;

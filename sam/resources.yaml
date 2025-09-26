@@ -73,6 +73,30 @@ Resources:
                 - X-Bot-API-Key
         DefaultAuthorizer: AdminCognitoAuth
         AddDefaultAuthorizerToCorsPreflight: false
+    CrawlerLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties: 
+      CompatibleRuntimes:
+        - nodejs22.x
+      CompatibleArchitectures:
+        - x86_64
+        - arm64
+      ContentUri: ./src
+      Description: Lambda layer for website crawler on headless chromium
+      LayerName: website-crawler
+      LicenseInfo: Authorized use only. Copyright.
+      RetentionPolicy: Retain
+    Metadata:
+      BuildMethod: nodejs22.x
+  LayerARNParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /service/crawler/layer/arn
+      Type: String
+      Value: !Ref CrawlerLayer
+      Description: SSM Parameter for the ARN of the Crawler layer.
+      Tags:
+        Environment: !Ref Env
   UserPool:
     Type: AWS::Cognito::UserPool
     Properties:
