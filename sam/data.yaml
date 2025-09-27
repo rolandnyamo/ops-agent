@@ -43,6 +43,9 @@ Resources:
             - { AttributeName: PK, KeyType: RANGE }
           Projection:
             ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
 
 
   SettingsTable:
