@@ -130,6 +130,8 @@ export type TranslationItem = {
   translatedAt?: string;
   approvedAt?: string;
   errorMessage?: string;
+  restartedAt?: string;
+  healthCheckReason?: string | null;
 };
 
 export type TranslationChunk = {
@@ -142,6 +144,18 @@ export type TranslationChunk = {
   lastUpdatedBy?: string;
   lastUpdatedAt?: string;
   reviewerName?: string;
+};
+
+export type TranslationLogEntry = {
+  logId?: string;
+  translationId: string;
+  ownerId: string;
+  createdAt: string;
+  eventType: string;
+  status?: string | null;
+  message?: string | null;
+  actor?: { type?: string; email?: string | null; name?: string | null; sub?: string | null; source?: string } | null;
+  metadata?: Record<string, any> | null;
 };
 
 export async function createTranslationUploadUrl(filename: string, contentType: string){
@@ -216,6 +230,27 @@ export async function deleteTranslation(translationId: string){
   });
   if (!res.ok) throw new Error(`delete translation ${res.status}`);
   return res.json() as Promise<{ translationId: string; deleted: boolean }>;
+}
+
+export async function restartTranslation(translationId: string){
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/restart`, {
+    method: 'POST',
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`restart translation ${res.status}`);
+  return res.json() as Promise<{ message: string }>;
+}
+
+export async function listTranslationLogs(translationId: string, nextToken?: string, limit = 20){
+  const params = new URLSearchParams();
+  if (nextToken) params.set('nextToken', nextToken);
+  if (limit) params.set('limit', String(limit));
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/logs${qs}`, {
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`list translation logs ${res.status}`);
+  return res.json() as Promise<{ items: TranslationLogEntry[]; nextToken?: string | null }>;
 }
 
 // Infer API

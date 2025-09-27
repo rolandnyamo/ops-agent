@@ -5,6 +5,7 @@ const { prepareTranslationDocument, assembleHtmlDocument } = require('./helpers/
 const { getTranslationEngine } = require('./helpers/translationEngine');
 const { ensureChunkSource, listChunks, updateChunkState, summariseChunks } = require('./helpers/translationStore');
 const { sendJobNotification } = require('./helpers/notifications');
+const { appendTranslationLog } = require('./helpers/translationLogs');
 
 const s3 = new S3Client({});
 const ddb = new DynamoDBClient({});
@@ -40,6 +41,14 @@ async function failTranslation({ translationId, ownerId, errorMessage, context, 
       status: 'failed',
       fileName,
       jobId: translationId
+    });
+    await recordLog({
+      translationId,
+      ownerId,
+      eventType: 'failed',
+      status: 'FAILED',
+      message: errorMessage || 'Translation failed',
+      metadata: context ? { context } : undefined
     });
   } catch (inner) {
     console.error('translationWorker failed to persist error state', inner);
@@ -78,6 +87,17 @@ async function updateTranslationItem(translationId, ownerId = 'default', patch) 
   }));
 }
 
+async function recordLog(entry) {
+  try {
+    await appendTranslationLog({
+      ...entry,
+      actor: entry.actor || { type: 'system', source: 'translation-worker' }
+    });
+  } catch (err) {
+    console.warn('translationWorker log append failed', err?.message || err);
+  }
+}
+
 exports.handler = async (event) => {
   const detail = event?.detail || {};
   const translationId = detail.translationId;
@@ -109,6 +129,14 @@ exports.handler = async (event) => {
 
     const startedAt = item.startedAt || now();
     await updateTranslationItem(translationId, ownerId, { status: 'PROCESSING', startedAt });
+    await recordLog({
+      translationId,
+      ownerId,
+      eventType: 'processing-started',
+      status: 'PROCESSING',
+      message: 'Translation processing started',
+      metadata: { startedAt }
+    });
 
     let buffer, contentType;
     try {
@@ -311,6 +339,20 @@ exports.handler = async (event) => {
       healthCheckReason: null
     });
     console.log('translationWorker completed', { translationId, chunkKey, machineKey, chunkCount: normalizedChunks.length });
+    await recordLog({
+      translationId,
+      ownerId,
+      eventType: 'processing-completed',
+      status: 'READY_FOR_REVIEW',
+      message: 'Translation processing completed',
+      metadata: {
+        chunkFileKey: chunkKey,
+        machineFileKey: machineKey,
+        chunkCount: normalizedChunks.length,
+        provider: engine.name,
+        model: engine.model
+      }
+    });
     await sendJobNotification({
       jobType: 'translation',
       status: 'completed',

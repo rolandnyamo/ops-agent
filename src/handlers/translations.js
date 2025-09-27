@@ -9,6 +9,8 @@ const { response } = require('./helpers/utils');
 const { assembleHtmlDocument } = require('./helpers/documentParser');
 const { listChunks, updateChunkState, deleteAllChunks, summariseChunks } = require('./helpers/translationStore');
 const { sendJobNotification } = require('./helpers/notifications');
+const { appendTranslationLog, listTranslationLogs } = require('./helpers/translationLogs');
+const { restartTranslation: publishTranslationRestart } = require('./helpers/jobMonitor');
 
 const ddb = new DynamoDBClient({});
 const s3 = new S3Client({});
@@ -51,6 +53,28 @@ function reviewerFrom(event) {
     email: claims['email'] || null,
     sub: claims['sub'] || null,
   };
+}
+
+function actorFrom(reviewer) {
+  if (!reviewer) return { type: 'system' };
+  const { email = null, name = null, sub = null } = reviewer;
+  if (!email && !name && !sub) {
+    return { type: 'system' };
+  }
+  return {
+    type: 'user',
+    email,
+    name,
+    sub
+  };
+}
+
+async function recordLog(entry) {
+  try {
+    await appendTranslationLog(entry);
+  } catch (err) {
+    console.warn('translation log append failed', err?.message || err);
+  }
 }
 
 function makeItem(input) {
@@ -164,6 +188,20 @@ async function createTranslation(body, eventOwner, requester) {
     status: 'started',
     fileName: filename,
     jobId: translationId
+  });
+
+  await recordLog({
+    translationId,
+    ownerId,
+    eventType: 'submitted',
+    status: 'PROCESSING',
+    message: 'Translation request submitted',
+    actor: actorFrom(requester),
+    metadata: {
+      sourceLanguage,
+      targetLanguage,
+      originalFilename: filename
+    }
   });
 
   return item;
@@ -404,6 +442,18 @@ async function handleApprove(translationId, ownerId, reviewer) {
   if (item.chunkFileKey) {
     await deleteS3Object(item.chunkFileKey);
   }
+  await recordLog({
+    translationId,
+    ownerId,
+    eventType: 'approved',
+    status: 'APPROVED',
+    message: 'Translation approved',
+    actor: actorFrom(reviewer),
+    metadata: {
+      translatedFileKey: docxKey || htmlKey,
+      translatedFormat: docxKey ? 'docx' : 'html'
+    }
+  });
   return statusPatch;
 }
 
@@ -438,7 +488,7 @@ async function deleteS3Object(key) {
   }
 }
 
-async function handleDelete(translationId, ownerId) {
+async function handleDelete(translationId, ownerId, reviewer) {
   const item = await getTranslation(translationId, ownerId);
   if (!item) {
     throw new Error('Translation not found');
@@ -479,6 +529,18 @@ async function handleDelete(translationId, ownerId) {
   }));
 
   console.log('deleted translation', { translationId, ownerId, deletedKeys: keysToDelete.length });
+  await recordLog({
+    translationId,
+    ownerId,
+    eventType: 'deleted',
+    status: 'DELETED',
+    message: 'Translation deleted',
+    actor: actorFrom(reviewer),
+    metadata: {
+      deletedKeys: keysToDelete.length,
+      statusBeforeDelete: item.status
+    }
+  });
   return { translationId, deleted: true };
 }
 
@@ -502,6 +564,10 @@ exports.handler = async (event, context, callback) => {
       rawPath: event?.rawPath,
       resource: event?.resource 
     });
+    if (method === 'OPTIONS') {
+      return ok(200, { ok: true }, callback);
+    }
+
     if (method === 'POST' && path.endsWith('/translations/upload-url')) {
       const body = parseBody(event);
       console.log('generate upload url', { ownerId, filename: body.filename, contentType: body.contentType });
@@ -539,6 +605,45 @@ exports.handler = async (event, context, callback) => {
     }
     
     console.log('extracted translationId', { translationId });
+
+    if (method === 'POST' && path.endsWith('/restart')) {
+      const item = await getTranslation(translationId, ownerId);
+      if (!item) {
+        return ok(404, { message: 'Translation not found' }, callback);
+      }
+      if (!['FAILED', 'PROCESSING'].includes(item.status)) {
+        return ok(409, { message: 'Translation cannot be restarted from the current state' }, callback);
+      }
+      await updateTranslation(translationId, ownerId, {
+        status: 'PROCESSING',
+        errorMessage: null,
+        errorContext: null,
+        restartedAt: now(),
+        healthCheckRetries: 0,
+        healthCheckReason: null
+      });
+      await recordLog({
+        translationId,
+        ownerId,
+        eventType: 'restart-requested',
+        status: 'PROCESSING',
+        message: 'Manual restart requested by administrator',
+        actor: actorFrom(reviewer)
+      });
+      await publishTranslationRestart(translationId, ownerId);
+      return ok(202, { message: 'Restart queued' }, callback);
+    }
+
+    if (method === 'GET' && path.endsWith('/logs')) {
+      const item = await getTranslation(translationId, ownerId);
+      if (!item) {
+        return ok(404, { message: 'Translation not found' }, callback);
+      }
+      const limit = Number(event?.queryStringParameters?.limit) || 50;
+      const nextToken = event?.queryStringParameters?.nextToken || null;
+      const logs = await listTranslationLogs({ translationId, limit, nextToken });
+      return ok(200, logs, callback);
+    }
 
     if (method === 'GET' && path.endsWith('/chunks')) {
       const item = await getTranslation(translationId, ownerId);
@@ -609,7 +714,7 @@ exports.handler = async (event, context, callback) => {
 
     if (method === 'DELETE') {
       console.log('delete translation', { translationId });
-      const result = await handleDelete(translationId, ownerId);
+      const result = await handleDelete(translationId, ownerId, reviewer);
       return ok(200, result, callback);
     }
 

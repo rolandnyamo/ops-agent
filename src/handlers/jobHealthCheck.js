@@ -10,6 +10,7 @@ const {
   invokeIngestWorker,
   sendJobNotification
 } = require('./helpers/jobMonitor');
+const { appendTranslationLog } = require('./helpers/translationLogs');
 
 const ddb = new DynamoDBClient({});
 
@@ -92,6 +93,22 @@ async function markDocFailed(doc, reason) {
   });
 }
 
+async function recordRestartLog(translationId, ownerId, reason) {
+  try {
+    await appendTranslationLog({
+      translationId,
+      ownerId,
+      eventType: 'restart-requested',
+      status: 'PROCESSING',
+      message: 'Translation restart triggered by health check',
+      actor: { type: 'system', source: 'health-check' },
+      metadata: { reason }
+    });
+  } catch (err) {
+    console.warn('Failed to append health check translation log', err?.message || err);
+  }
+}
+
 exports.handler = async () => {
   const result = {
     translationsChecked: 0,
@@ -123,6 +140,7 @@ exports.handler = async () => {
       continue;
     }
     await restartTranslation(report.translationId, report.ownerId);
+    await recordRestartLog(report.translationId, report.ownerId, reason);
     result.translationsRestarted += 1;
   }
 
