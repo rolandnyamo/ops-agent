@@ -278,9 +278,26 @@ async function handleChunkUpdate(event, translationId, ownerId, reviewer) {
   }
 
   const item = await getTranslation(translationId, ownerId);
+  if (!item) {
+    const err = new Error('Translation not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (item.status === 'APPROVED') {
+    const err = new Error('Translation already approved; review is read-only');
+    err.statusCode = 403;
+    throw err;
+  }
+  if (item.status !== 'READY_FOR_REVIEW') {
+    const err = new Error('Translation not ready for review');
+    err.statusCode = 409;
+    throw err;
+  }
   const records = await listChunks(translationId, ownerId);
   if (!records.length) {
-    throw new Error('No chunk data found for translation');
+    const err = new Error('No chunk data found for translation');
+    err.statusCode = 404;
+    throw err;
   }
   const chunkMap = new Map(records.map(record => [record.chunkId, record]));
   const updatedAt = now();
@@ -336,6 +353,23 @@ async function handleApprove(translationId, ownerId, reviewer) {
   if (!item) {
     throw new Error('Translation not found');
   }
+  if (item.status === 'APPROVED') {
+    console.log('translation already approved, skipping reprocessing', { translationId, ownerId });
+    await deleteAllChunks(translationId, ownerId);
+    if (item.chunkFileKey) {
+      await updateTranslation(translationId, ownerId, { chunkFileKey: null });
+      await deleteS3Object(item.chunkFileKey);
+    }
+    return {
+      status: 'APPROVED',
+      approvedAt: item.approvedAt,
+      approvedBy: item.approvedBy,
+      translatedFileKey: item.translatedFileKey,
+      translatedHtmlKey: item.translatedHtmlKey,
+      translatedFormat: item.translatedFormat,
+      alreadyApproved: true
+    };
+  }
   const records = await listChunks(translationId, ownerId);
   if (!records.length) {
     throw new Error('No chunk data found for translation');
@@ -362,9 +396,14 @@ async function handleApprove(translationId, ownerId, reviewer) {
     approvedBy: reviewer.email || reviewer.name || reviewer.sub || 'reviewer',
     translatedFileKey: docxKey || htmlKey,
     translatedFormat: docxKey ? 'docx' : 'html',
-    translatedHtmlKey: htmlKey
+    translatedHtmlKey: htmlKey,
+    chunkFileKey: null
   };
   await updateTranslation(translationId, ownerId, statusPatch);
+  await deleteAllChunks(translationId, ownerId);
+  if (item.chunkFileKey) {
+    await deleteS3Object(item.chunkFileKey);
+  }
   return statusPatch;
 }
 
@@ -506,6 +545,17 @@ exports.handler = async (event, context, callback) => {
       if (!item) {
         return ok(404, { message: 'Translation not found' }, callback);
       }
+      if (item.status === 'APPROVED') {
+        return ok(200, {
+          translationId,
+          headHtml: item.headHtml,
+          sourceLanguage: item.sourceLanguage,
+          targetLanguage: item.targetLanguage,
+          chunks: [],
+          reviewLocked: true,
+          message: 'Translation has been approved and chunk review is read-only.'
+        }, callback);
+      }
       const chunks = await fetchChunkState(item, ownerId);
       if (!chunks) {
         return ok(404, { message: 'No chunks found' }, callback);
@@ -515,7 +565,8 @@ exports.handler = async (event, context, callback) => {
         headHtml: item.headHtml,
         sourceLanguage: item.sourceLanguage,
         targetLanguage: item.targetLanguage,
-        chunks
+        chunks,
+        reviewLocked: false
       }, callback);
     }
 
@@ -567,6 +618,10 @@ exports.handler = async (event, context, callback) => {
     if (error?.code === 'NotFound') {
       console.warn('translations handler asset missing', { path, method, ownerId, message: error.message, key: error.key });
       return ok(404, { message: error.message || 'Asset not found', key: error.key }, callback);
+    }
+    if (error?.statusCode) {
+      console.warn('translations handler request error', { statusCode: error.statusCode, message: error.message });
+      return ok(error.statusCode, { message: error.message || 'Request failed' }, callback);
     }
     console.error('translations handler error', error);
     return ok(500, { message: error.message || 'Server error' }, callback);

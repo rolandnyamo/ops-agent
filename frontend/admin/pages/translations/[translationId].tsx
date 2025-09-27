@@ -57,24 +57,40 @@ export default function TranslationDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [savingChunk, setSavingChunk] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
+  const [reviewLocked, setReviewLocked] = useState(false);
+  const [chunkNotice, setChunkNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!translationId) return;
     async function load() {
       setLoading(true);
+      setReviewLocked(false);
+      setChunkNotice(null);
       try {
         const t = await getTranslation(translationId);
         setTranslation(t);
         const data = await getTranslationChunks(translationId);
+        setReviewLocked(Boolean(data.reviewLocked));
+        setChunkNotice(data.message || null);
         const ordered = (data.chunks || []).sort((a, b) => (a.order || 0) - (b.order || 0));
         setChunks(ordered);
-        const nextDrafts: Record<string, string> = {};
-        ordered.forEach(chunk => {
-          nextDrafts[chunk.id] = chunk.reviewerHtml || chunk.machineHtml || chunk.sourceHtml;
-        });
-        setDrafts(nextDrafts);
+        if (!data.reviewLocked) {
+          const nextDrafts: Record<string, string> = {};
+          ordered.forEach(chunk => {
+            nextDrafts[chunk.id] = chunk.reviewerHtml || chunk.machineHtml || chunk.sourceHtml;
+          });
+          setDrafts(nextDrafts);
+        } else {
+          setDrafts({});
+        }
       } catch (err: any) {
-        setError(err.message || 'Failed to load translation');
+        if (typeof err?.message === 'string' && err.message.includes('404')) {
+          setChunks([]);
+          setDrafts({});
+          setChunkNotice('Chunks are not available yet.');
+        } else {
+          setError(err.message || 'Failed to load translation');
+        }
       } finally {
         setLoading(false);
       }
@@ -82,8 +98,18 @@ export default function TranslationDetailPage() {
     load();
   }, [translationId]);
 
+  const canEditChunks = useMemo(
+    () => translation?.status === 'READY_FOR_REVIEW' && !reviewLocked,
+    [translation, reviewLocked]
+  );
+  const isApproved = useMemo(() => translation?.status === 'APPROVED', [translation]);
+
   async function saveChunk(chunkId: string) {
     if (!translationId) return;
+    if (!canEditChunks) {
+      setError('Translation review is read-only.');
+      return;
+    }
     setSavingChunk(chunkId);
     setError(null);
     try {
@@ -113,6 +139,17 @@ export default function TranslationDetailPage() {
       await approveTranslation(translationId);
       const updated = await getTranslation(translationId);
       setTranslation(updated);
+      try {
+        const chunkData = await getTranslationChunks(translationId);
+        setReviewLocked(Boolean(chunkData.reviewLocked));
+        setChunkNotice(chunkData.message || 'Translation has been approved.');
+        setChunks(chunkData.chunks || []);
+      } catch {
+        setReviewLocked(true);
+        setChunkNotice('Translation has been approved. Chunk data is no longer available.');
+        setChunks([]);
+      }
+      setDrafts({});
     } catch (err: any) {
       setError(err.message || 'Approval failed');
     } finally {
@@ -129,8 +166,6 @@ export default function TranslationDetailPage() {
       setError(err.message || 'Download failed');
     }
   }
-
-  const reviewable = useMemo(() => translation?.status === 'READY_FOR_REVIEW' || translation?.status === 'APPROVED', [translation]);
 
   if (!translationId) {
     return (
@@ -162,8 +197,8 @@ export default function TranslationDetailPage() {
               {translation.status === 'APPROVED' && (
                 <button className="btn ghost mini" onClick={() => download('translated')}>Final</button>
               )}
-              {reviewable && translation.status !== 'APPROVED' && (
-                <button className="btn" onClick={approve} disabled={approving}>
+              {translation.status === 'READY_FOR_REVIEW' && (
+                <button className="btn" onClick={approve} disabled={approving || reviewLocked}>
                   {approving ? 'Finalising…' : 'Mark approved'}
                 </button>
               )}
@@ -172,48 +207,80 @@ export default function TranslationDetailPage() {
         </div>
       )}
 
-      {reviewable ? (
-        <div className="stack" style={{ gap: 24 }}>
-          {chunks.map(chunk => {
-            const draft = drafts[chunk.id];
-            const machineHtml = chunk.machineHtml || '';
-            return (
-              <div key={chunk.id} className="card">
-                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <div style={{ fontWeight: 600 }}>Chunk {chunk.order}</div>
-                  <button className="btn ghost mini" onClick={() => saveChunk(chunk.id)} disabled={savingChunk === chunk.id}>
-                    {savingChunk === chunk.id ? 'Saving…' : 'Save chunk'}
-                  </button>
-                </div>
-                <div className="grid cols-3" style={{ gap: 16 }}>
-                  <div>
-                    <h4 className="muted" style={{ marginBottom: 6 }}>Source</h4>
-                    <div className="preview" dangerouslySetInnerHTML={{ __html: chunk.sourceHtml }} />
-                  </div>
-                  <div>
-                    <h4 className="muted" style={{ marginBottom: 6 }}>Translation (HTML)</h4>
-                    <textarea
-                      className="textarea"
-                      rows={8}
-                      value={draft}
-                      onChange={e => setDrafts(prev => ({ ...prev, [chunk.id]: e.target.value }))}
-                    />
-                    <div className="muted mini" style={{ marginTop: 4 }}>Keep HTML tags intact.</div>
-                  </div>
-                  <div>
-                    <h4 className="muted" style={{ marginBottom: 6 }}>Preview</h4>
-                    <div className="preview" dangerouslySetInnerHTML={{ __html: draft }} />
-                  </div>
-                </div>
-                <div style={{ marginTop: 12 }}>
-                  <h4 className="muted" style={{ marginBottom: 6 }}>Changes vs machine translation</h4>
-                  <div className="diff-view">
-                    {renderDiff(machineHtml, draft)}
-                  </div>
-                </div>
+      {translation?.status === 'READY_FOR_REVIEW' ? (
+        reviewLocked ? (
+          <div className="card">
+            <div className="muted">Translation review is currently read-only.</div>
+            {chunkNotice && <div className="muted mini" style={{ marginTop: 8 }}>{chunkNotice}</div>}
+          </div>
+        ) : (
+          <div className="stack" style={{ gap: 24 }}>
+            {chunkNotice && (
+              <div className="card" style={{ background: 'rgba(59,130,246,.08)', borderColor: 'rgba(59,130,246,.35)' }}>
+                <div className="muted mini">{chunkNotice}</div>
               </div>
-            );
-          })}
+            )}
+            {chunks.map(chunk => {
+              const draft = drafts[chunk.id];
+              const machineHtml = chunk.machineHtml || '';
+              return (
+                <div key={chunk.id} className="card">
+                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div style={{ fontWeight: 600 }}>Chunk {chunk.order}</div>
+                    <button
+                      className="btn ghost mini"
+                      onClick={() => saveChunk(chunk.id)}
+                      disabled={savingChunk === chunk.id || !canEditChunks}
+                    >
+                      {savingChunk === chunk.id ? 'Saving…' : 'Save chunk'}
+                    </button>
+                  </div>
+                  <div className="grid cols-3" style={{ gap: 16 }}>
+                    <div>
+                      <h4 className="muted" style={{ marginBottom: 6 }}>Source</h4>
+                      <div className="preview" dangerouslySetInnerHTML={{ __html: chunk.sourceHtml }} />
+                    </div>
+                    <div>
+                      <h4 className="muted" style={{ marginBottom: 6 }}>Translation (HTML)</h4>
+                      <textarea
+                        className="textarea"
+                        rows={8}
+                        value={draft}
+                        onChange={e => setDrafts(prev => ({ ...prev, [chunk.id]: e.target.value }))}
+                        disabled={!canEditChunks}
+                      />
+                      <div className="muted mini" style={{ marginTop: 4 }}>Keep HTML tags intact.</div>
+                    </div>
+                    <div>
+                      <h4 className="muted" style={{ marginBottom: 6 }}>Preview</h4>
+                      <div className="preview" dangerouslySetInnerHTML={{ __html: draft }} />
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <h4 className="muted" style={{ marginBottom: 6 }}>Changes vs machine translation</h4>
+                    <div className="diff-view">
+                      {renderDiff(machineHtml, draft)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {!chunks.length && (
+              <div className="card">
+                <div className="muted">No chunks available yet.</div>
+              </div>
+            )}
+          </div>
+        )
+      ) : isApproved ? (
+        <div className="card">
+          <div className="muted">Translation has been approved. Chunk data has been removed.</div>
+          {chunkNotice && <div className="muted mini" style={{ marginTop: 8 }}>{chunkNotice}</div>}
+        </div>
+      ) : translation?.status === 'FAILED' ? (
+        <div className="card">
+          <div className="muted">Translation failed.</div>
+          {translation.errorMessage && <div className="muted mini" style={{ marginTop: 8 }}>{translation.errorMessage}</div>}
         </div>
       ) : (
         <div className="card">

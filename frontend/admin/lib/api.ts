@@ -179,7 +179,7 @@ export async function getTranslation(translationId: string){
 export async function getTranslationChunks(translationId: string){
   const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/chunks`, { headers: { ...(await authHeader()) } });
   if (!res.ok) throw new Error(`get translation chunks ${res.status}`);
-  return res.json() as Promise<{ translationId?: string; chunks: TranslationChunk[]; headHtml?: string; sourceLanguage?: string; targetLanguage?: string; lastReviewedAt?: string }>;
+  return res.json() as Promise<{ translationId?: string; chunks: TranslationChunk[]; headHtml?: string; sourceLanguage?: string; targetLanguage?: string; lastReviewedAt?: string; reviewLocked?: boolean; message?: string }>;
 }
 
 export async function updateTranslationChunks(translationId: string, chunks: Array<{ id: string; reviewerHtml: string; }>){
