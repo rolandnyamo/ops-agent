@@ -564,6 +564,10 @@ exports.handler = async (event, context, callback) => {
       rawPath: event?.rawPath,
       resource: event?.resource 
     });
+    if (method === 'OPTIONS') {
+      return ok(200, { ok: true }, callback);
+    }
+
     if (method === 'POST' && path.endsWith('/translations/upload-url')) {
       const body = parseBody(event);
       console.log('generate upload url', { ownerId, filename: body.filename, contentType: body.contentType });

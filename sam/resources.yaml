@@ -522,6 +522,24 @@ Resources:
             RestApiId: !Ref Api
             Path: /translations/{translationId}
             Method: DELETE
+        RestartTranslation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/restart
+            Method: POST
+        ListTranslationLogs:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/logs
+            Method: GET
+        TranslationLogsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/logs
+            Method: OPTIONS
 
   TranslationWorkerFn:
     Type: AWS::Serverless::Function
@@ -862,6 +880,18 @@ Resources:
             RestApiId: !Ref Api
             Path: /users/{userId}/deactivate
             Method: PUT
+        UpdateUserNotifications:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /users/{userId}/notifications
+            Method: PUT
+        UserNotificationsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /users/{userId}/notifications
+            Method: OPTIONS
         DeleteUser:
           Type: Api
           Properties:
