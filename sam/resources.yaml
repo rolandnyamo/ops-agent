@@ -22,6 +22,10 @@ Parameters:
     Type: String
     Default: docs
     Description: S3 Vectors index name
+  SesSenderEmail:
+    Type: String
+    Default: notifications@example.com
+    Description: Verified SES email identity used for job notifications
 
 Globals:
   Function:
@@ -44,6 +48,7 @@ Globals:
         VECTOR_DIMENSION: '1536'
         TRANSLATION_PROVIDER: openai
         TRANSLATION_MODEL: gpt-4o-mini
+        SES_SENDER: !Ref SesSenderEmail
 
 Resources:
   Api:
@@ -259,6 +264,8 @@ Resources:
       Environment:
         Variables:
           ENABLE_TERM_STATS: 'true'
+          SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
+          SES_SENDER: !Ref SesSenderEmail
       Policies:
         - Statement:
             - Effect: Allow
@@ -291,6 +298,12 @@ Resources:
                 - events:PutEvents
               Resource:
                 - "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: '*'
 
   S3PutRule:
     Type: AWS::Events::Rule
@@ -420,6 +433,8 @@ Resources:
           RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
           TRANSLATION_PROVIDER: openai
           TRANSLATION_MODEL: gpt-4o-mini
+          SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
+          SES_SENDER: !Ref SesSenderEmail
       Policies:
         - Statement:
             - Effect: Allow
@@ -439,6 +454,12 @@ Resources:
             - Effect: Allow
               Action:
                 - events:PutEvents
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
               Resource: '*'
       Events:
         PostTranslationUploadUrl:
@@ -516,6 +537,8 @@ Resources:
           RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
           TRANSLATION_PROVIDER: openai
           TRANSLATION_MODEL: gpt-4o-mini
+          SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
+          SES_SENDER: !Ref SesSenderEmail
       Policies:
         - Statement:
             - Effect: Allow
@@ -537,6 +560,12 @@ Resources:
             BucketName: '*'
         - S3WritePolicy:
             BucketName: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: '*'
 
   TranslationEventRule:
     Type: AWS::Events::Rule
@@ -556,6 +585,51 @@ Resources:
       FunctionName: !Ref TranslationWorkerFn
       Principal: events.amazonaws.com
       SourceArn: !GetAtt TranslationEventRule.Arn
+
+  JobHealthCheckFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-job-health"
+      CodeUri: ../src
+      Handler: handlers/jobHealthCheck.handler
+      Timeout: 120
+      Environment:
+        Variables:
+          DOCS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-DocsTableName' }
+          RAW_BUCKET: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-RawBucketName' }
+          SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
+          SES_SENDER: !Ref SesSenderEmail
+          INGEST_WORKER_FUNCTION_NAME: !Sub "${ProjectName}-${Stage}-ingest-worker"
+          JOB_HEALTH_STALE_MINUTES: '15'
+          JOB_HEALTH_MAX_RETRIES: '3'
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !GetAtt IngestionWorkerFn.Arn
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: '*'
+      Events:
+        ScheduledCheck:
+          Type: Schedule
+          Properties:
+            Schedule: rate(10 minutes)
+            Name: !Sub "${ProjectName}-${Stage}-job-health"
 
   ViewDocFn:
     Type: AWS::Serverless::Function

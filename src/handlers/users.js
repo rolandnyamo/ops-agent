@@ -9,6 +9,7 @@ const {
   AdminListGroupsForUserCommand
 } = require('@aws-sdk/client-cognito-identity-provider');
 const { response } = require('./helpers/utils');
+const { getUserNotificationPreferences, putUserNotificationPreferences, normalisePreferences } = require('./helpers/notifications');
 
 const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION });
 const USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || 'us-east-1_plBqP2xqJ';
@@ -190,6 +191,11 @@ exports.handler = async (event, context, callback) => {
         response.statusCode = result.statusCode;
         response.body = result.body;
         return callback(null, response);
+      } else if (putPath.includes('/notifications')) {
+        const result = await updateUserNotifications(userId, body);
+        response.statusCode = result.statusCode;
+        response.body = result.body;
+        return callback(null, response);
       }
       break;
 
@@ -236,6 +242,21 @@ async function listUsers() {
 
     const response = await cognitoClient.send(command);
     const users = response.Users?.map(formatUser) || [];
+    await Promise.all(users.map(async user => {
+      try {
+        const prefs = await getUserNotificationPreferences(user.userId);
+        user.notifications = {
+          email: prefs?.email || user.email || null,
+          preferences: prefs?.preferences || normalisePreferences()
+        };
+      } catch (err) {
+        console.warn('Failed to load notification preferences for user', user.userId, err?.message || err);
+        user.notifications = {
+          email: user.email || null,
+          preferences: normalisePreferences()
+        };
+      }
+    }));
 
     return {
       statusCode: 200,
@@ -266,6 +287,20 @@ async function getUser(userId) {
       lastModified: response.UserLastModifiedDate,
       displayStatus: getDisplayStatus(response.UserStatus, response.Enabled)
     };
+
+    try {
+      const prefs = await getUserNotificationPreferences(user.userId);
+      user.notifications = {
+        email: prefs?.email || user.email || null,
+        preferences: prefs?.preferences || normalisePreferences()
+      };
+    } catch (err) {
+      console.warn('Failed to load notification preferences for user', user.userId, err?.message || err);
+      user.notifications = {
+        email: user.email || null,
+        preferences: normalisePreferences()
+      };
+    }
 
     return {
       statusCode: 200,
@@ -414,5 +449,27 @@ async function deleteUser(userId) {
     }
     console.error('Delete user error:', error);
     throw error;
+  }
+}
+
+async function updateUserNotifications(userId, body) {
+  try {
+    const email = body?.email || body?.notifyEmail || null;
+    const preferences = normalisePreferences(body?.preferences || body?.notifications || {});
+    const saved = await putUserNotificationPreferences({ userId, email, preferences });
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        userId,
+        email: saved.email,
+        preferences: saved.preferences
+      })
+    };
+  } catch (error) {
+    console.error('updateUserNotifications error:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ message: 'Failed to update notification preferences', error: error.message })
+    };
   }
 }

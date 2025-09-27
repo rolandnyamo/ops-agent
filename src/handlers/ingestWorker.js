@@ -4,6 +4,7 @@ const { DynamoDBClient, UpdateItemCommand, GetItemCommand, PutItemCommand, Delet
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { response } = require('./helpers/utils');
 const { parseDocument } = require('./helpers/documentParser');
+const { sendJobNotification } = require('./helpers/notifications');
 
 const s3 = new S3Client({});
 const ddb = new DynamoDBClient({});
@@ -35,8 +36,28 @@ async function readObject(bucket, key){
 async function setStatus(docId, agentId, status, extra={}){
   const names = { '#u':'updatedAt', '#s':'status' };
   const values = { ':u': new Date().toISOString(), ':s': status };
+  if (status !== 'PROCESSING') {
+    names['#retries'] = 'healthCheckRetries';
+    values[':zero'] = 0;
+  }
   for (const [k,v] of Object.entries(extra)) { names[`#${k}`] = k; values[`:${k}`] = v; }
-  await ddb.send(new UpdateItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId||'default'}` }), UpdateExpression: 'SET #u = :u, #s = :s' + Object.keys(extra).map(k=>`, #${k} = :${k}`).join(''), ExpressionAttributeNames: names, ExpressionAttributeValues: marshall(values) }));
+  const updates = ['#u = :u', '#s = :s'];
+  if (status !== 'PROCESSING') {
+    updates.push('#retries = :zero');
+  }
+  updates.push(...Object.keys(extra).map(k => `#${k} = :${k}`));
+  await ddb.send(new UpdateItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId||'default'}` }), UpdateExpression: 'SET ' + updates.join(', '), ExpressionAttributeNames: names, ExpressionAttributeValues: marshall(values) }));
+  if (status === 'PROCESSING' || status === 'READY' || status === 'FAILED') {
+    try {
+      const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId||'default'}` }) }));
+      const item = res.Item ? unmarshall(res.Item) : {};
+      const fileName = item.title || item.originalFilename || item.fileKey?.split('/').pop() || docId;
+      const notifyStatus = status === 'READY' ? 'completed' : status === 'FAILED' ? 'failed' : 'started';
+      await sendJobNotification({ jobType: 'documentation', status: notifyStatus, fileName, jobId: docId });
+    } catch (err) {
+      console.warn('Failed to send ingestion notification', err?.message || err);
+    }
+  }
 }
 
 async function embedChunks(chunks){

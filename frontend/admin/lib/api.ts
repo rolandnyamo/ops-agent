@@ -179,7 +179,7 @@ export async function getTranslation(translationId: string){
 export async function getTranslationChunks(translationId: string){
   const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/chunks`, { headers: { ...(await authHeader()) } });
   if (!res.ok) throw new Error(`get translation chunks ${res.status}`);
-  return res.json() as Promise<{ chunks: TranslationChunk[]; headHtml?: string; sourceLanguage?: string; targetLanguage?: string }>;
+  return res.json() as Promise<{ translationId?: string; chunks: TranslationChunk[]; headHtml?: string; sourceLanguage?: string; targetLanguage?: string; lastReviewedAt?: string; reviewLocked?: boolean; message?: string }>;
 }
 
 export async function updateTranslationChunks(translationId: string, chunks: Array<{ id: string; reviewerHtml: string; }>){
@@ -189,7 +189,7 @@ export async function updateTranslationChunks(translationId: string, chunks: Arr
     body: JSON.stringify({ chunks })
   });
   if (!res.ok) throw new Error(`update translation chunks ${res.status}`);
-  return res.json() as Promise<{ chunks: TranslationChunk[] }>;
+  return res.json() as Promise<{ chunks: TranslationChunk[]; headHtml?: string; lastReviewedAt?: string }>;
 }
 
 export async function approveTranslation(translationId: string){
@@ -290,6 +290,11 @@ export async function deleteAgent(agentId: string){
 }
 
 // User Management API
+export type NotificationPreferences = {
+  translation: { started: boolean; completed: boolean; failed: boolean };
+  documentation: { started: boolean; completed: boolean; failed: boolean };
+};
+
 export type User = {
   userId: string;
   email: string;
@@ -299,6 +304,10 @@ export type User = {
   created: string;
   lastModified: string;
   displayStatus: string;
+  notifications?: {
+    email: string | null;
+    preferences: NotificationPreferences;
+  };
 };
 
 export async function getUsers(): Promise<{ users: User[] }> {
@@ -351,6 +360,16 @@ export async function deleteUser(userId: string): Promise<{ message: string }> {
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
   });
   if (!res.ok) throw new Error(`DELETE /users/${userId} ${res.status}`);
+  return res.json();
+}
+
+export async function updateUserNotificationPreferences(userId: string, payload: { email?: string; preferences: NotificationPreferences }): Promise<{ userId: string; email: string | null; preferences: NotificationPreferences }> {
+  const res = await fetch(`${cfg.apiBase}/users/${encodeURIComponent(userId)}/notifications`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error(`PUT /users/${userId}/notifications ${res.status}`);
   return res.json();
 }
 

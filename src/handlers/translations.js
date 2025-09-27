@@ -7,6 +7,8 @@ const HtmlDocx = require('html-docx-js');
 const crypto = require('node:crypto');
 const { response } = require('./helpers/utils');
 const { assembleHtmlDocument } = require('./helpers/documentParser');
+const { listChunks, updateChunkState, deleteAllChunks, summariseChunks } = require('./helpers/translationStore');
+const { sendJobNotification } = require('./helpers/notifications');
 
 const ddb = new DynamoDBClient({});
 const s3 = new S3Client({});
@@ -157,6 +159,13 @@ async function createTranslation(body, eventOwner, requester) {
     }]
   }));
 
+  await sendJobNotification({
+    jobType: 'translation',
+    status: 'started',
+    fileName: filename,
+    jobId: translationId
+  });
+
   return item;
 }
 
@@ -205,16 +214,6 @@ async function updateTranslation(translationId, ownerId, patch) {
   }));
 }
 
-async function loadChunks(chunkKey) {
-  const res = await s3.send(new GetObjectCommand({ Bucket: RAW_BUCKET, Key: chunkKey }));
-  const bytes = await res.Body.transformToByteArray();
-  return JSON.parse(Buffer.from(bytes).toString('utf8'));
-}
-
-async function saveChunks(chunkKey, payload) {
-  await s3.send(new PutObjectCommand({ Bucket: RAW_BUCKET, Key: chunkKey, Body: JSON.stringify(payload), ContentType: 'application/json' }));
-}
-
 async function objectExists(key) {
   try {
     await s3.send(new HeadObjectCommand({ Bucket: RAW_BUCKET, Key: key }));
@@ -228,6 +227,50 @@ async function objectExists(key) {
   }
 }
 
+function normaliseChunkRecord(record) {
+  return {
+    id: record.chunkId,
+    order: record.order,
+    sourceHtml: record.sourceHtml,
+    sourceText: record.sourceText,
+    machineHtml: record.machineHtml,
+    reviewerHtml: record.reviewerHtml || null,
+    lastUpdatedBy: record.lastUpdatedBy || null,
+    lastUpdatedAt: record.lastUpdatedAt || record.updatedAt || null,
+    reviewerName: record.reviewerName || null
+  };
+}
+
+async function fetchChunkState(item, ownerId) {
+  const records = await listChunks(item.translationId, ownerId);
+  if (!records.length) return null;
+  const sorted = records.sort((a, b) => (a.order || 0) - (b.order || 0));
+  return sorted.map(normaliseChunkRecord);
+}
+
+function buildChunkPayload(item, chunks) {
+  return {
+    translationId: item.translationId,
+    generatedAt: now(),
+    sourceLanguage: item.sourceLanguage,
+    targetLanguage: item.targetLanguage,
+    provider: item.provider || null,
+    model: item.model || null,
+    headHtml: item.headHtml || '<head><meta charset="utf-8"/></head>',
+    chunks
+  };
+}
+
+async function persistChunkPayload(item, ownerId, chunks) {
+  if (!RAW_BUCKET) return;
+  const payload = buildChunkPayload(item, chunks);
+  const key = item.chunkFileKey || `translations/chunks/${ownerId}/${item.translationId}.json`;
+  await s3.send(new PutObjectCommand({ Bucket: RAW_BUCKET, Key: key, Body: JSON.stringify(payload), ContentType: 'application/json' }));
+  if (!item.chunkFileKey) {
+    await updateTranslation(item.translationId, ownerId, { chunkFileKey: key });
+  }
+}
+
 async function handleChunkUpdate(event, translationId, ownerId, reviewer) {
   const body = parseBody(event);
   if (!body.chunks || !Array.isArray(body.chunks)) {
@@ -235,43 +278,106 @@ async function handleChunkUpdate(event, translationId, ownerId, reviewer) {
   }
 
   const item = await getTranslation(translationId, ownerId);
-  if (!item?.chunkFileKey) {
-    throw new Error('No chunk file found for translation');
+  if (!item) {
+    const err = new Error('Translation not found');
+    err.statusCode = 404;
+    throw err;
   }
-  const chunkData = await loadChunks(item.chunkFileKey);
-  const chunkMap = new Map((chunkData.chunks || []).map(chunk => [chunk.id, chunk]));
+  if (item.status === 'APPROVED') {
+    const err = new Error('Translation already approved; review is read-only');
+    err.statusCode = 403;
+    throw err;
+  }
+  if (item.status !== 'READY_FOR_REVIEW') {
+    const err = new Error('Translation not ready for review');
+    err.statusCode = 409;
+    throw err;
+  }
+  const records = await listChunks(translationId, ownerId);
+  if (!records.length) {
+    const err = new Error('No chunk data found for translation');
+    err.statusCode = 404;
+    throw err;
+  }
+  const chunkMap = new Map(records.map(record => [record.chunkId, record]));
   const updatedAt = now();
   for (const incoming of body.chunks) {
-    const target = chunkMap.get(incoming.id);
-    if (!target) continue;
-    let nextHtml = target.machineHtml;
+    const record = chunkMap.get(incoming.id);
+    if (!record) continue;
+    let nextHtml = record.machineHtml;
     if (Object.prototype.hasOwnProperty.call(incoming, 'reviewerHtml')) {
-      nextHtml = typeof incoming.reviewerHtml === 'string' ? incoming.reviewerHtml : target.machineHtml;
+      nextHtml = typeof incoming.reviewerHtml === 'string' ? incoming.reviewerHtml : record.machineHtml;
     } else if (Object.prototype.hasOwnProperty.call(incoming, 'html')) {
-      nextHtml = typeof incoming.html === 'string' ? incoming.html : target.machineHtml;
+      nextHtml = typeof incoming.html === 'string' ? incoming.html : record.machineHtml;
     } else if (Object.prototype.hasOwnProperty.call(incoming, 'text')) {
-      nextHtml = typeof incoming.text === 'string' ? incoming.text : target.machineHtml;
+      nextHtml = typeof incoming.text === 'string' ? incoming.text : record.machineHtml;
     }
-    target.reviewerHtml = nextHtml;
-    target.lastUpdatedBy = reviewer.email || reviewer.name || reviewer.sub || 'reviewer';
-    target.lastUpdatedAt = updatedAt;
-    target.reviewerName = reviewer.name || target.reviewerName || null;
+    const updated = await updateChunkState({
+      translationId,
+      ownerId,
+      chunkOrder: record.order,
+      patch: {
+        reviewerHtml: nextHtml,
+        lastUpdatedBy: reviewer.email || reviewer.name || reviewer.sub || 'reviewer',
+        lastUpdatedAt: updatedAt,
+        reviewerName: reviewer.name || record.reviewerName || null
+      }
+    });
+    if (updated?.chunkId) {
+      chunkMap.set(updated.chunkId, updated);
+    }
   }
 
-  chunkData.lastReviewedAt = updatedAt;
-  chunkData.chunks = Array.from(chunkMap.values());
-  await saveChunks(item.chunkFileKey, chunkData);
-  await updateTranslation(translationId, ownerId, { lastReviewedAt: updatedAt });
-  return chunkData;
+  const sortedRecords = Array.from(chunkMap.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const normalized = sortedRecords.map(normaliseChunkRecord);
+  await persistChunkPayload(item, ownerId, normalized);
+
+  const summary = summariseChunks(sortedRecords);
+  await updateTranslation(translationId, ownerId, {
+    lastReviewedAt: updatedAt,
+    processedChunks: summary.completed,
+    failedChunks: summary.failed
+  });
+
+  return {
+    headHtml: item.headHtml,
+    chunks: normalized,
+    lastReviewedAt: updatedAt,
+    sourceLanguage: item.sourceLanguage,
+    targetLanguage: item.targetLanguage
+  };
 }
 
 async function handleApprove(translationId, ownerId, reviewer) {
   const item = await getTranslation(translationId, ownerId);
-  if (!item?.chunkFileKey) {
-    throw new Error('No chunk file found for translation');
+  if (!item) {
+    throw new Error('Translation not found');
   }
-  const chunkData = await loadChunks(item.chunkFileKey);
-  const finalHtml = assembleHtmlDocument({ headHtml: chunkData.headHtml, chunks: chunkData.chunks, reviewer: true });
+  if (item.status === 'APPROVED') {
+    console.log('translation already approved, skipping reprocessing', { translationId, ownerId });
+    await deleteAllChunks(translationId, ownerId);
+    if (item.chunkFileKey) {
+      await updateTranslation(translationId, ownerId, { chunkFileKey: null });
+      await deleteS3Object(item.chunkFileKey);
+    }
+    return {
+      status: 'APPROVED',
+      approvedAt: item.approvedAt,
+      approvedBy: item.approvedBy,
+      translatedFileKey: item.translatedFileKey,
+      translatedHtmlKey: item.translatedHtmlKey,
+      translatedFormat: item.translatedFormat,
+      alreadyApproved: true
+    };
+  }
+  const records = await listChunks(translationId, ownerId);
+  if (!records.length) {
+    throw new Error('No chunk data found for translation');
+  }
+  const normalized = records
+    .sort((a, b) => (a.order || 0) - (b.order || 0))
+    .map(normaliseChunkRecord);
+  const finalHtml = assembleHtmlDocument({ headHtml: item.headHtml, chunks: normalized, reviewer: true });
   const htmlKey = `translations/output/${ownerId}/${translationId}.html`;
   await s3.send(new PutObjectCommand({ Bucket: RAW_BUCKET, Key: htmlKey, Body: finalHtml, ContentType: 'text/html; charset=utf-8' }));
 
@@ -290,9 +396,14 @@ async function handleApprove(translationId, ownerId, reviewer) {
     approvedBy: reviewer.email || reviewer.name || reviewer.sub || 'reviewer',
     translatedFileKey: docxKey || htmlKey,
     translatedFormat: docxKey ? 'docx' : 'html',
-    translatedHtmlKey: htmlKey
+    translatedHtmlKey: htmlKey,
+    chunkFileKey: null
   };
   await updateTranslation(translationId, ownerId, statusPatch);
+  await deleteAllChunks(translationId, ownerId);
+  if (item.chunkFileKey) {
+    await deleteS3Object(item.chunkFileKey);
+  }
   return statusPatch;
 }
 
@@ -361,6 +472,7 @@ async function handleDelete(translationId, ownerId) {
   ]);
 
   // Delete DynamoDB record
+  await deleteAllChunks(translationId, ownerId);
   await ddb.send(new DeleteItemCommand({
     TableName: DOCS_TABLE,
     Key: marshall({ PK: `TRANSLATION#${translationId}`, SK: `TRANSLATION#${ownerId}` })
@@ -430,12 +542,32 @@ exports.handler = async (event, context, callback) => {
 
     if (method === 'GET' && path.endsWith('/chunks')) {
       const item = await getTranslation(translationId, ownerId);
-      if (!item?.chunkFileKey) {
+      if (!item) {
+        return ok(404, { message: 'Translation not found' }, callback);
+      }
+      if (item.status === 'APPROVED') {
+        return ok(200, {
+          translationId,
+          headHtml: item.headHtml,
+          sourceLanguage: item.sourceLanguage,
+          targetLanguage: item.targetLanguage,
+          chunks: [],
+          reviewLocked: true,
+          message: 'Translation has been approved and chunk review is read-only.'
+        }, callback);
+      }
+      const chunks = await fetchChunkState(item, ownerId);
+      if (!chunks) {
         return ok(404, { message: 'No chunks found' }, callback);
       }
-      console.log('fetching chunks', { translationId, chunkFileKey: item.chunkFileKey });
-      const chunkData = await loadChunks(item.chunkFileKey);
-      return ok(200, chunkData, callback);
+      return ok(200, {
+        translationId,
+        headHtml: item.headHtml,
+        sourceLanguage: item.sourceLanguage,
+        targetLanguage: item.targetLanguage,
+        chunks,
+        reviewLocked: false
+      }, callback);
     }
 
     if (method === 'PUT' && path.endsWith('/chunks')) {
@@ -486,6 +618,10 @@ exports.handler = async (event, context, callback) => {
     if (error?.code === 'NotFound') {
       console.warn('translations handler asset missing', { path, method, ownerId, message: error.message, key: error.key });
       return ok(404, { message: error.message || 'Asset not found', key: error.key }, callback);
+    }
+    if (error?.statusCode) {
+      console.warn('translations handler request error', { statusCode: error.statusCode, message: error.message });
+      return ok(error.statusCode, { message: error.message || 'Request failed' }, callback);
     }
     console.error('translations handler error', error);
     return ok(500, { message: error.message || 'Server error' }, callback);

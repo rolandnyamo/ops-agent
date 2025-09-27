@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
-import { getUsers, inviteUser, activateUser, deactivateUser, deleteUser, type User } from '../lib/api';
+import { getUsers, inviteUser, activateUser, deactivateUser, deleteUser, updateUserNotificationPreferences, type User, type NotificationPreferences } from '../lib/api';
+
+const DEFAULT_NOTIFICATION_PREFS: NotificationPreferences = {
+  translation: { started: false, completed: true, failed: true },
+  documentation: { started: false, completed: true, failed: true }
+};
 
 export default function Users() {
   const [users, setUsers] = useState<User[]>([]);
@@ -12,6 +17,7 @@ export default function Users() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviting, setInviting] = useState(false);
+  const [updatingNotifications, setUpdatingNotifications] = useState<Record<string, boolean>>({});
 
   // Confirmation state
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -148,6 +154,42 @@ export default function Users() {
     }
   }
 
+  function getUserPreferences(user: User): NotificationPreferences {
+    const base = user.notifications?.preferences || DEFAULT_NOTIFICATION_PREFS;
+    return {
+      translation: { ...base.translation },
+      documentation: { ...base.documentation }
+    };
+  }
+
+  function notificationEmail(user: User) {
+    return user.notifications?.email || user.email || '';
+  }
+
+  async function handleNotificationToggle(user: User, jobType: keyof NotificationPreferences, status: keyof NotificationPreferences['translation'], value: boolean) {
+    const prefs = getUserPreferences(user);
+    prefs[jobType][status] = value;
+    setUpdatingNotifications(prev => ({ ...prev, [user.userId]: true }));
+    try {
+      await updateUserNotificationPreferences(user.userId, {
+        email: notificationEmail(user),
+        preferences: prefs
+      });
+      setUsers(prev => prev.map(u => u.userId === user.userId ? {
+        ...u,
+        notifications: {
+          email: notificationEmail(user),
+          preferences: prefs
+        }
+      } : u));
+      setSuccess('Notification preferences updated');
+    } catch (err: any) {
+      setError(`Failed to update notifications: ${err?.message || err}`);
+    } finally {
+      setUpdatingNotifications(prev => ({ ...prev, [user.userId]: false }));
+    }
+  }
+
   // Clear messages after 5 seconds
   useEffect(() => {
     if (success) {
@@ -202,29 +244,71 @@ export default function Users() {
                 <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
                   <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: '600' }}>Email</th>
                   <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: '600' }}>Status</th>
+                  <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: '600' }}>Notifications</th>
                   <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: '600' }}>Created</th>
                   <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: '600' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map((user) => (
-                  <tr key={user.userId} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                    <td style={{ padding: '12px 8px' }}>
-                      <div>
-                        <div style={{ fontWeight: '500' }}>{user.email}</div>
-                        <div style={{ fontSize: '12px', color: '#666' }}>
-                          {user.emailVerified ? '✓ Verified' : '⚠ Unverified'}
+                {users.map((user) => {
+                  const prefs = getUserPreferences(user);
+                  const disabled = Boolean(updatingNotifications[user.userId]);
+                  return (
+                    <tr key={user.userId} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                      <td style={{ padding: '12px 8px' }}>
+                        <div>
+                          <div style={{ fontWeight: '500' }}>{user.email}</div>
+                          <div style={{ fontSize: '12px', color: '#666' }}>
+                            {user.emailVerified ? '✓ Verified' : '⚠ Unverified'}
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td style={{ padding: '12px 8px' }}>
-                      {getStatusBadge(user)}
-                    </td>
-                    <td style={{ padding: '12px 8px', color: '#666' }}>
-                      {formatDate(user.created)}
-                    </td>
-                    <td style={{ padding: '12px 8px' }}>
-                      <div className="row" style={{ gap: 8 }}>
+                      </td>
+                      <td style={{ padding: '12px 8px' }}>
+                        {getStatusBadge(user)}
+                      </td>
+                      <td style={{ padding: '12px 8px', fontSize: '12px', color: '#444' }}>
+                        <div style={{ marginBottom: 6 }}>
+                          <strong>Translation</strong>
+                          <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+                            {(['started', 'completed', 'failed'] as Array<keyof NotificationPreferences['translation']>).map((status) => (
+                              <label key={status} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={prefs.translation[status]}
+                                  onChange={(e) => handleNotificationToggle(user, 'translation', status, e.target.checked)}
+                                  disabled={disabled}
+                                />
+                                <span style={{ textTransform: 'capitalize' }}>{status}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                        <div style={{ marginBottom: 6 }}>
+                          <strong>Documentation</strong>
+                          <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+                            {(['started', 'completed', 'failed'] as Array<keyof NotificationPreferences['translation']>).map((status) => (
+                              <label key={status} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={prefs.documentation[status]}
+                                  onChange={(e) => handleNotificationToggle(user, 'documentation', status, e.target.checked)}
+                                  disabled={disabled}
+                                />
+                                <span style={{ textTransform: 'capitalize' }}>{status}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                        <div style={{ color: '#666' }}>
+                          <strong>Send to:</strong> {notificationEmail(user) || '—'}
+                          {disabled && <span style={{ marginLeft: 8 }}>Saving...</span>}
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px 8px', color: '#666' }}>
+                        {formatDate(user.created)}
+                      </td>
+                      <td style={{ padding: '12px 8px' }}>
+                        <div className="row" style={{ gap: 8 }}>
                         {user.displayStatus === 'Inactive' ? (
                           <button
                             className="btn ghost mini"
@@ -270,9 +354,10 @@ export default function Users() {
                           🗑️ Delete
                         </button>
                       </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
