@@ -8,11 +8,23 @@ const {
   AdminGetUserCommand,
   AdminListGroupsForUserCommand
 } = require('@aws-sdk/client-cognito-identity-provider');
-const { response } = require('./helpers/utils');
+const { corsHeaders } = require('./helpers/utils');
 const { getUserNotificationPreferences, putUserNotificationPreferences, normalisePreferences } = require('./helpers/notifications');
 
 const cognitoClient = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION });
 const USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || 'us-east-1_plBqP2xqJ';
+
+const baseHeaders = corsHeaders();
+
+function send(callback, statusCode, payload) {
+  const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  return callback(null, {
+    statusCode,
+    headers: { ...baseHeaders },
+    isBase64Encoded: false,
+    body
+  });
+}
 
 // Helper function to check if user is admin
 async function isUserAdmin(username, tokenPayload = null) {
@@ -131,20 +143,20 @@ exports.handler = async (event, context, callback) => {
   console.log('Resource:', event.resource);
   console.log('Path parameters:', pathParameters);
 
+  if (method === 'OPTIONS') {
+    return send(callback, 200, { ok: true });
+  }
+
   try {
     // Check if user is admin
     const userInfo = getUserInfoFromEvent(event);
     if (!userInfo || !userInfo.username) {
-      response.statusCode = 401;
-      response.body = JSON.stringify({ message: 'Unauthorized - No valid token' });
-      return callback(null, response);
+      return send(callback, 401, { message: 'Unauthorized - No valid token' });
     }
 
     const isAdmin = await isUserAdmin(userInfo.username, userInfo.payload);
     if (!isAdmin) {
-      response.statusCode = 403;
-      response.body = JSON.stringify({ message: 'Forbidden - Admin access required' });
-      return callback(null, response);
+      return send(callback, 403, { message: 'Forbidden - Admin access required' });
     }
 
     // Route to appropriate handler
@@ -152,83 +164,59 @@ exports.handler = async (event, context, callback) => {
     case 'GET':
       if (pathParameters.userId) {
         const result = await getUser(pathParameters.userId);
-        response.statusCode = result.statusCode;
-        response.body = result.body;
-        return callback(null, response);
+        return send(callback, result.statusCode, result.body);
       } else {
         const result = await listUsers();
-        response.statusCode = result.statusCode;
-        response.body = result.body;
-        return callback(null, response);
+        return send(callback, result.statusCode, result.body);
       }
 
     case 'POST':
       const path = event.path || event.requestContext?.http?.path || '';
       if (path.includes('/invite')) {
         const result = await inviteUser(body);
-        response.statusCode = result.statusCode;
-        response.body = result.body;
-        return callback(null, response);
+        return send(callback, result.statusCode, result.body);
       }
       break;
 
     case 'PUT':
       const userId = pathParameters.userId;
       if (!userId) {
-        response.statusCode = 400;
-        response.body = JSON.stringify({ message: 'User ID required' });
-        return callback(null, response);
+        return send(callback, 400, { message: 'User ID required' });
       }
 
       const putPath = event.path || event.requestContext?.http?.path || '';
       if (putPath.includes('/activate')) {
         const result = await activateUser(userId);
-        response.statusCode = result.statusCode;
-        response.body = result.body;
-        return callback(null, response);
+        return send(callback, result.statusCode, result.body);
       } else if (putPath.includes('/deactivate')) {
         const result = await deactivateUser(userId);
-        response.statusCode = result.statusCode;
-        response.body = result.body;
-        return callback(null, response);
+        return send(callback, result.statusCode, result.body);
       } else if (putPath.includes('/notifications')) {
         const result = await updateUserNotifications(userId, body);
-        response.statusCode = result.statusCode;
-        response.body = result.body;
-        return callback(null, response);
+        return send(callback, result.statusCode, result.body);
       }
       break;
 
     case 'DELETE':
       const userIdToDelete = pathParameters.userId;
       if (!userIdToDelete) {
-        response.statusCode = 400;
-        response.body = JSON.stringify({ message: 'User ID required' });
-        return callback(null, response);
+        return send(callback, 400, { message: 'User ID required' });
       }
       const result = await deleteUser(userIdToDelete);
-      response.statusCode = result.statusCode;
-      response.body = result.body;
-      return callback(null, response);
+      return send(callback, result.statusCode, result.body);
 
     default:
-      response.statusCode = 405;
-      response.body = JSON.stringify({ message: 'Method Not Allowed' });
-      return callback(null, response);
+      return send(callback, 405, { message: 'Method Not Allowed' });
     }
 
-    response.statusCode = 404;
-    response.body = JSON.stringify({ message: 'Not Found' });
-    return callback(null, response);
+    return send(callback, 404, { message: 'Not Found' });
 
   } catch (error) {
     console.error('Users handler error:', error);
-    response.statusCode = 500;
-    response.body = JSON.stringify({
+    return send(callback, 500, {
       message: 'Internal server error',
       error: error.message
     });
-    return callback(null, response);
   }
 };
 

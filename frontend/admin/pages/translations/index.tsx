@@ -7,14 +7,40 @@ import {
   listTranslations,
   getTranslationDownloadUrl,
   deleteTranslation,
+  restartTranslation,
+  listTranslationLogs,
   inferDoc,
-  type TranslationItem
+  type TranslationItem,
+  type TranslationLogEntry
 } from '../../lib/api';
+import TranslationLogsIcon from '../../components/TranslationLogsIcon';
 
 const LANG_OPTIONS = [
   { label: 'English', value: 'en' },
   { label: 'French', value: 'fr' }
 ];
+
+type LogsModalState = {
+  open: boolean;
+  translationId: string | null;
+  title: string;
+  entries: TranslationLogEntry[];
+  loading: boolean;
+  loadingMore: boolean;
+  nextToken: string | null;
+  error: string | null;
+};
+
+const LOGS_MODAL_DEFAULT: LogsModalState = {
+  open: false,
+  translationId: null,
+  title: '',
+  entries: [],
+  loading: false,
+  loadingMore: false,
+  nextToken: null,
+  error: null
+};
 
 function statusLabel(status: string) {
   switch (status) {
@@ -47,6 +73,9 @@ export default function TranslationsPage() {
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ translationId: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [restartConfirm, setRestartConfirm] = useState<{ translationId: string; title: string } | null>(null);
+  const [restartingId, setRestartingId] = useState<string | null>(null);
+  const [logsModal, setLogsModal] = useState<LogsModalState>(LOGS_MODAL_DEFAULT);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [form, setForm] = useState({
@@ -231,7 +260,7 @@ export default function TranslationsPage() {
 
   async function confirmDelete() {
     if (!deleteConfirm) return;
-    
+
     setDeleting(true);
     try {
       await deleteTranslation(deleteConfirm.translationId);
@@ -245,6 +274,81 @@ export default function TranslationsPage() {
       setDeleting(false);
     }
   }
+
+  const handleRestartClick = useCallback((item: TranslationItem) => {
+    setRestartConfirm({ translationId: item.translationId, title: item.title || item.originalFilename || item.translationId });
+  }, []);
+
+  const closeRestartModal = useCallback(() => {
+    setRestartConfirm(null);
+  }, []);
+
+  async function confirmRestart() {
+    if (!restartConfirm) return;
+    setRestartingId(restartConfirm.translationId);
+    setError(null);
+    try {
+      await restartTranslation(restartConfirm.translationId);
+      setNotice('Translation restart queued. Processing will resume shortly.');
+      setRestartConfirm(null);
+      await refresh(true);
+    } catch (err: any) {
+      setError(err.message || 'Restart failed');
+    } finally {
+      setRestartingId(null);
+    }
+  }
+
+  const openLogs = useCallback(async (item: TranslationItem) => {
+    setLogsModal({
+      ...LOGS_MODAL_DEFAULT,
+      open: true,
+      translationId: item.translationId,
+      title: item.title || item.originalFilename || 'Translation logs',
+      loading: true
+    });
+    try {
+      const res = await listTranslationLogs(item.translationId);
+      setLogsModal(prev => ({
+        ...prev,
+        loading: false,
+        entries: res.items || [],
+        nextToken: res.nextToken || null
+      }));
+    } catch (err: any) {
+      setLogsModal(prev => ({
+        ...prev,
+        loading: false,
+        error: err.message || 'Failed to load logs'
+      }));
+    }
+  }, []);
+
+  const closeLogsModal = useCallback(() => {
+    setLogsModal({ ...LOGS_MODAL_DEFAULT });
+  }, []);
+
+  const loadMoreLogs = useCallback(async () => {
+    if (!logsModal.translationId || !logsModal.nextToken || logsModal.loadingMore) return;
+    const translationId = logsModal.translationId;
+    const token = logsModal.nextToken;
+    setLogsModal(prev => ({ ...prev, loadingMore: true, error: null }));
+    try {
+      const res = await listTranslationLogs(translationId, token);
+      setLogsModal(prev => ({
+        ...prev,
+        loadingMore: false,
+        entries: [...prev.entries, ...(res.items || [])],
+        nextToken: res.nextToken || null
+      }));
+    } catch (err: any) {
+      setLogsModal(prev => ({
+        ...prev,
+        loadingMore: false,
+        error: err.message || 'Failed to load more logs'
+      }));
+    }
+  }, [logsModal.translationId, logsModal.nextToken, logsModal.loadingMore]);
 
   const onFileChange = async () => {
     const file = fileRef.current?.files?.[0];
@@ -314,22 +418,25 @@ export default function TranslationsPage() {
               </tr>
             </thead>
             <tbody>
-              {items.map(item => (
-                <tr key={item.translationId}>
-                  <td style={{ paddingLeft: 24 }}>
-                    <div style={{ fontWeight: 600 }}>{item.title || item.originalFilename}</div>
-                    <div className="muted mini">{item.originalFilename}</div>
-                  </td>
-                  <td>{item.sourceLanguage?.toUpperCase()} → {item.targetLanguage?.toUpperCase()}</td>
-                  <td>
-                    <span className={`chip mini ${statusClass(item.status)}`}>{statusLabel(item.status)}</span>
-                  </td>
-                  <td>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '—'}</td>
-                  <td>
-                    <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+              {items.map(item => {
+                const canRestart = item.status === 'FAILED' || item.status === 'PROCESSING';
+                const restarting = restartingId === item.translationId;
+                return (
+                  <tr key={item.translationId}>
+                    <td style={{ paddingLeft: 24 }}>
+                      <div style={{ fontWeight: 600 }}>{item.title || item.originalFilename}</div>
+                      <div className="muted mini">{item.originalFilename}</div>
+                    </td>
+                    <td>{item.sourceLanguage?.toUpperCase()} → {item.targetLanguage?.toUpperCase()}</td>
+                    <td>
+                      <span className={`chip mini ${statusClass(item.status)}`}>{statusLabel(item.status)}</span>
+                    </td>
+                    <td>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '—'}</td>
+                    <td>
+                      <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
                       <div style={{ position: 'relative' }} data-dropdown>
-                        <button 
-                          className="btn mini" 
+                        <button
+                          className="btn mini"
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleDropdown(item.translationId);
@@ -419,6 +526,32 @@ export default function TranslationsPage() {
                       </div>
                       <button
                         className="btn ghost mini"
+                        onClick={() => openLogs(item)}
+                        title="View translation logs"
+                        style={{
+                          padding: '6px 8px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        <TranslationLogsIcon style={{ width: 16, height: 16 }} />
+                      </button>
+                      <button
+                        className="btn mini"
+                        onClick={() => handleRestartClick(item)}
+                        disabled={!canRestart || restarting}
+                        style={{
+                          padding: '6px 12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        {restarting ? 'Restarting…' : 'Restart'}
+                      </button>
+                      <button
+                        className="btn ghost mini"
                         onClick={() => showDeleteConfirm(item.translationId, item.title || item.originalFilename)}
                         disabled={deleting}
                         style={{ 
@@ -447,7 +580,8 @@ export default function TranslationsPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -626,9 +760,9 @@ export default function TranslationsPage() {
 
       {deleteConfirm && (
         <div className="modal-backdrop" onClick={closeDeleteModal}>
-          <div 
-            className="modal" 
-            onClick={e => e.stopPropagation()} 
+          <div
+            className="modal"
+            onClick={e => e.stopPropagation()}
             style={{ 
               maxWidth: '480px',
               background: '#0f172a',
@@ -680,6 +814,169 @@ export default function TranslationsPage() {
                 {deleting ? 'Deleting…' : 'Delete Translation'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {restartConfirm && (
+        <div className="modal-backdrop" onClick={closeRestartModal}>
+          <div
+            className="modal"
+            onClick={e => e.stopPropagation()}
+            style={{
+              maxWidth: '460px',
+              background: '#0f172a',
+              color: '#f8fafc'
+            }}
+          >
+            <div style={{ marginBottom: 20 }}>
+              <h3 style={{ margin: 0, marginBottom: 8, color: '#38bdf8' }}>Restart translation</h3>
+              <p style={{ margin: 0, color: '#cbd5e1' }}>
+                This will queue the translation for processing again. Existing progress will be preserved.
+              </p>
+            </div>
+
+            <div
+              style={{
+                marginBottom: 20,
+                padding: 16,
+                background: 'rgba(56, 189, 248, 0.08)',
+                border: '1px solid rgba(56, 189, 248, 0.2)',
+                borderRadius: '8px'
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 4, color: '#f8fafc' }}>{restartConfirm.title}</div>
+              <div style={{ fontSize: '12px', color: '#94a3b8' }}>Translation ID: {restartConfirm.translationId}</div>
+            </div>
+
+            <div className="row" style={{ gap: 12, justifyContent: 'flex-end' }}>
+              <button
+                className="btn ghost"
+                onClick={closeRestartModal}
+                disabled={restartingId === restartConfirm.translationId}
+                style={{
+                  color: '#cbd5e1',
+                  borderColor: 'rgba(148, 163, 184, 0.4)'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn"
+                onClick={confirmRestart}
+                disabled={restartingId === restartConfirm.translationId}
+                style={{
+                  background: '#38bdf8',
+                  color: '#0f172a',
+                  border: '1px solid #38bdf8'
+                }}
+              >
+                {restartingId === restartConfirm.translationId ? 'Restarting…' : 'Restart translation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {logsModal.open && (
+        <div className="modal-backdrop" onClick={closeLogsModal}>
+          <div
+            className="modal"
+            onClick={e => e.stopPropagation()}
+            style={{
+              maxWidth: '720px',
+              background: '#0f172a',
+              color: '#f8fafc',
+              maxHeight: '80vh',
+              overflowY: 'auto'
+            }}
+          >
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#f8fafc' }}>Activity logs</h3>
+                <div className="muted mini" style={{ color: '#94a3b8' }}>{logsModal.title}</div>
+              </div>
+              <button
+                className="btn ghost mini"
+                onClick={closeLogsModal}
+                style={{
+                  color: '#cbd5e1',
+                  borderColor: 'rgba(148, 163, 184, 0.4)'
+                }}
+              >
+                Close
+              </button>
+            </div>
+
+            {logsModal.error && (
+              <div className="chip" style={{ borderColor: 'var(--danger)', background: 'rgba(220,38,38,.08)', marginBottom: 16 }}>
+                {logsModal.error}
+              </div>
+            )}
+
+            {logsModal.loading ? (
+              <div className="muted" style={{ padding: '24px 0' }}>Loading logs…</div>
+            ) : logsModal.entries.length ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {logsModal.entries.map((entry, idx) => {
+                  const actor = entry.actor;
+                  const actorLabel = actor?.name || actor?.email || actor?.sub || (actor?.type === 'system' ? 'System' : actor?.type) || 'Unknown';
+                  return (
+                    <div
+                      key={entry.logId || `${entry.createdAt}-${idx}`}
+                      style={{
+                        border: '1px solid rgba(148,163,184,0.25)',
+                        borderRadius: 8,
+                        padding: 12,
+                        background: 'rgba(15,23,42,0.6)'
+                      }}
+                    >
+                      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                        <div style={{ fontWeight: 600 }}>{entry.message || entry.eventType}</div>
+                        <div className="muted mini" style={{ color: '#94a3b8' }}>{new Date(entry.createdAt).toLocaleString()}</div>
+                      </div>
+                      <div className="muted mini" style={{ color: '#a5b4fc', marginBottom: entry.metadata ? 8 : 0 }}>
+                        Status: {entry.status || '—'} · Actor: {actorLabel}
+                      </div>
+                      {entry.metadata && (
+                        <pre
+                          style={{
+                            margin: 0,
+                            padding: 12,
+                            borderRadius: 6,
+                            background: 'rgba(30,41,59,0.8)',
+                            border: '1px solid rgba(148,163,184,0.2)',
+                            fontSize: 12,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word'
+                          }}
+                        >
+                          {JSON.stringify(entry.metadata, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="muted" style={{ padding: '24px 0' }}>No activity recorded in the last 10 days.</div>
+            )}
+
+            {logsModal.nextToken && (
+              <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  className="btn ghost mini"
+                  onClick={loadMoreLogs}
+                  disabled={logsModal.loadingMore}
+                  style={{
+                    color: '#cbd5e1',
+                    borderColor: 'rgba(148, 163, 184, 0.4)'
+                  }}
+                >
+                  {logsModal.loadingMore ? 'Loading…' : 'Load more'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
