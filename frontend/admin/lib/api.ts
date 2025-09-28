@@ -215,7 +215,16 @@ export async function approveTranslation(translationId: string){
   return res.json() as Promise<{ status: string; translatedFileKey?: string }>;
 }
 
-export async function getTranslationDownloadUrl(translationId: string, type: 'original' | 'machine' | 'translated' | 'translatedHtml' = 'original'){
+export async function getTranslationDownloadUrl(
+  translationId: string,
+  type:
+    | 'original'
+    | 'machine'
+    | 'translated'
+    | 'translatedHtml'
+    | 'translatedDocx'
+    | 'translatedPdf' = 'original'
+){
   const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/download?type=${encodeURIComponent(type)}`, {
     headers: { ...(await authHeader()) }
   });
