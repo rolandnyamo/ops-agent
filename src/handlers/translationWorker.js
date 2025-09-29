@@ -6,7 +6,7 @@ const { persistAssetsAndAnchors } = require('./helpers/assetStore');
 const { getTranslationEngine } = require('./helpers/translationEngine');
 const { ensureChunkSource, listChunks, updateChunkState, summariseChunks } = require('./helpers/translationStore');
 const { sendJobNotification } = require('./helpers/notifications');
-const { appendTranslationLog } = require('./helpers/translationLogs');
+const { appendJobLog } = require('./helpers/jobLogs');
 
 const s3 = new S3Client({});
 const ddb = new DynamoDBClient({});
@@ -29,7 +29,7 @@ async function putObject(bucket, key, body, contentType) {
   await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }));
 }
 
-async function failTranslation({ translationId, ownerId, errorMessage, context, fileName }) {
+async function failTranslation({ translationId, ownerId, errorMessage, context, fileName, attempt }) {
   console.error('translationWorker failure', { translationId, ownerId, errorMessage, context });
   try {
     await updateTranslationItem(translationId, ownerId, {
@@ -41,15 +41,20 @@ async function failTranslation({ translationId, ownerId, errorMessage, context, 
       jobType: 'translation',
       status: 'failed',
       fileName,
-      jobId: translationId
+      jobId: translationId,
+      ownerId
     });
     await recordLog({
       translationId,
       ownerId,
+      category: 'processing',
+      stage: 'failure',
       eventType: 'failed',
       status: 'FAILED',
       message: errorMessage || 'Translation failed',
-      metadata: context ? { context } : undefined
+      metadata: context ? { context } : undefined,
+      failureReason: errorMessage || 'Translation failed',
+      attempt
     });
   } catch (inner) {
     console.error('translationWorker failed to persist error state', inner);
@@ -90,9 +95,23 @@ async function updateTranslationItem(translationId, ownerId = 'default', patch) 
 
 async function recordLog(entry) {
   try {
-    await appendTranslationLog({
-      ...entry,
-      actor: entry.actor || { type: 'system', source: 'translation-worker' }
+    await appendJobLog({
+      jobType: 'translation',
+      jobId: entry.translationId,
+      ownerId: entry.ownerId,
+      category: entry.category,
+      stage: entry.stage,
+      eventType: entry.eventType,
+      status: entry.status,
+      statusCode: entry.statusCode,
+      message: entry.message,
+      actor: entry.actor || { type: 'system', source: 'translation-worker', role: 'system' },
+      metadata: entry.metadata,
+      context: entry.context,
+      attempt: entry.attempt,
+      retryCount: entry.retryCount,
+      failureReason: entry.failureReason,
+      chunkProgress: entry.chunkProgress
     });
   } catch (err) {
     console.warn('translationWorker log append failed', err?.message || err);
@@ -122,9 +141,10 @@ exports.handler = async (event) => {
   try {
     console.log('translationWorker start', { translationId, ownerId, detail });
     item = await getTranslationItem(translationId, ownerId);
+    const attempt = Number(item.healthCheckRetries || 0) + 1;
     const originalKey = item.originalFileKey;
     if (!originalKey) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Original file key missing on translation item', context: item, fileName: item?.originalFilename });
+      await failTranslation({ translationId, ownerId, errorMessage: 'Original file key missing on translation item', context: item, fileName: item?.originalFilename, attempt });
       return;
     }
 
@@ -133,17 +153,20 @@ exports.handler = async (event) => {
     await recordLog({
       translationId,
       ownerId,
+      category: 'processing-kickoff',
+      stage: 'start',
       eventType: 'processing-started',
       status: 'PROCESSING',
       message: 'Translation processing started',
-      metadata: { startedAt }
+      metadata: { startedAt },
+      attempt
     });
 
     let buffer, contentType;
     try {
       ({ buffer, contentType } = await readObject(RAW_BUCKET, originalKey));
     } catch (readErr) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to read source document from S3', context: { originalKey, error: readErr.message }, fileName: item.originalFilename });
+      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to read source document from S3', context: { originalKey, error: readErr.message }, fileName: item.originalFilename, attempt });
       return;
     }
 
@@ -173,10 +196,27 @@ exports.handler = async (event) => {
           error: parseErr.message,
           filename: item.originalFilename || originalKey.split('/').pop() || 'document'
         },
-        fileName: item.originalFilename
+        fileName: item.originalFilename,
+        attempt
       });
       return;
     }
+
+    await recordLog({
+      translationId,
+      ownerId,
+      category: 'processing-kickoff',
+      stage: 'document-parse',
+      eventType: 'document-parsed',
+      status: 'PROCESSING',
+      message: 'Source document parsed for translation',
+      metadata: {
+        contentType,
+        chunkEstimate: Array.isArray(document?.chunks) ? document.chunks.length : 0,
+        assetCount: Array.isArray(document?.assets) ? document.assets.length : 0
+      },
+      attempt
+    });
 
     let assetContext = { assets: [], anchors: [] };
     let enrichedAssets = document.assets || [];
@@ -214,11 +254,26 @@ exports.handler = async (event) => {
       return;
     }
 
+    await recordLog({
+      translationId,
+      ownerId,
+      category: 'processing',
+      stage: 'asset-preparation',
+      eventType: 'assets-indexed',
+      status: 'PROCESSING',
+      message: 'Assets and anchors prepared for translation',
+      metadata: {
+        assetsStored: assetContext?.assets?.length || enrichedAssets.length || 0,
+        anchorsStored: assetContext?.anchors?.length || resolvedAnchors.length || 0
+      },
+      attempt
+    });
+
     let engine;
     try {
       engine = await getTranslationEngine();
     } catch (engineErr) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to initialise translation engine', context: { error: engineErr.message }, fileName: item.originalFilename });
+      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to initialise translation engine', context: { error: engineErr.message }, fileName: item.originalFilename, attempt });
       return;
     }
 
@@ -251,6 +306,27 @@ exports.handler = async (event) => {
       assetCount: enrichedAssets.length
     });
 
+    await recordLog({
+      translationId,
+      ownerId,
+      category: 'chunk-processing',
+      stage: 'queue',
+      eventType: 'chunks-queued',
+      status: 'PROCESSING',
+      message: `${pending.length} chunk(s) queued for machine translation`,
+      metadata: {
+        totalChunks: document.chunks.length,
+        pendingChunks: pending.length,
+        completedChunks: chunkSummary.completed
+      },
+      chunkProgress: {
+        completed: chunkSummary.completed,
+        failed: chunkSummary.failed,
+        total: document.chunks.length
+      },
+      attempt
+    });
+
     let translations = [];
     if (pending.length) {
       try {
@@ -272,7 +348,7 @@ exports.handler = async (event) => {
           chunkOrder: record.order,
           patch: { status: 'FAILED', errorMessage: translateErr.message }
         })));
-        await failTranslation({ translationId, ownerId, errorMessage: 'Translation provider error', context: { error: translateErr.message }, fileName: item.originalFilename });
+        await failTranslation({ translationId, ownerId, errorMessage: 'Translation provider error', context: { error: translateErr.message }, fileName: item.originalFilename, attempt });
         return;
       }
 
@@ -298,6 +374,28 @@ exports.handler = async (event) => {
           byId.set(updated.chunkId, updated);
         }
       }
+
+      const machineSummary = summariseChunks(Array.from(byId.values()));
+      await recordLog({
+        translationId,
+        ownerId,
+        category: 'chunk-processing',
+        stage: 'machine-translation',
+        eventType: 'chunks-processed',
+        status: 'PROCESSING',
+        message: `${translations.length} chunk(s) machine-translated`,
+        metadata: {
+          provider: engine.name,
+          model: engine.model,
+          translatedChunks: translations.length
+        },
+        chunkProgress: {
+          completed: machineSummary.completed,
+          failed: machineSummary.failed,
+          total: machineSummary.total
+        },
+        attempt
+      });
     }
 
     const finalChunks = Array.from(byId.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -369,8 +467,26 @@ exports.handler = async (event) => {
     try {
       await putObject(RAW_BUCKET, chunkKey, JSON.stringify(payload), 'application/json');
       console.log('translationWorker chunks stored', { translationId, chunkKey, chunkCount: payload.chunks.length });
+      await recordLog({
+        translationId,
+        ownerId,
+        category: 'reassembly',
+        stage: 'chunk-persist',
+        eventType: 'chunk-payload-stored',
+        status: 'PROCESSING',
+        message: 'Chunk payload persisted to storage',
+        metadata: {
+          chunkKey,
+          chunkCount: payload.chunks.length
+        },
+        chunkProgress: {
+          completed: payload.chunks.length,
+          failed: 0,
+          total: payload.chunks.length
+        }
+      });
     } catch (chunkErr) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to persist translation chunks', context: { chunkKey, error: chunkErr.message }, fileName: item.originalFilename });
+      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to persist translation chunks', context: { chunkKey, error: chunkErr.message }, fileName: item.originalFilename, attempt });
       return;
     }
 
@@ -384,8 +500,21 @@ exports.handler = async (event) => {
     try {
       await putObject(RAW_BUCKET, machineKey, machineHtml, 'text/html');
       console.log('translationWorker machine HTML stored', { translationId, machineKey, length: machineHtml.length });
+      await recordLog({
+        translationId,
+        ownerId,
+        category: 'reassembly',
+        stage: 'machine-output',
+        eventType: 'machine-html-stored',
+        status: 'PROCESSING',
+        message: 'Machine translated HTML stored',
+        metadata: {
+          machineKey,
+          htmlLength: machineHtml.length
+        }
+      });
     } catch (htmlErr) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to persist machine translated HTML', context: { machineKey, error: htmlErr.message }, fileName: item.originalFilename });
+      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to persist machine translated HTML', context: { machineKey, error: htmlErr.message }, fileName: item.originalFilename, attempt });
       return;
     }
 
@@ -407,6 +536,8 @@ exports.handler = async (event) => {
     await recordLog({
       translationId,
       ownerId,
+      category: 'processing',
+      stage: 'complete',
       eventType: 'processing-completed',
       status: 'READY_FOR_REVIEW',
       message: 'Translation processing completed',
@@ -417,13 +548,20 @@ exports.handler = async (event) => {
         assetCount: enrichedAssets.length,
         provider: engine.name,
         model: engine.model
-      }
+      },
+      chunkProgress: {
+        completed: normalizedChunks.length,
+        failed: 0,
+        total: normalizedChunks.length
+      },
+      attempt
     });
     await sendJobNotification({
       jobType: 'translation',
       status: 'completed',
       fileName: item.originalFilename,
-      jobId: translationId
+      jobId: translationId,
+      ownerId
     });
   } catch (error) {
     console.error('translationWorker failed', error);

@@ -5,6 +5,7 @@ const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { response } = require('./helpers/utils');
 const { parseDocument } = require('./helpers/documentParser');
 const { sendJobNotification } = require('./helpers/notifications');
+const { appendJobLog } = require('./helpers/jobLogs');
 
 const s3 = new S3Client({});
 const ddb = new DynamoDBClient({});
@@ -53,10 +54,48 @@ async function setStatus(docId, agentId, status, extra={}){
       const item = res.Item ? unmarshall(res.Item) : {};
       const fileName = item.title || item.originalFilename || item.fileKey?.split('/').pop() || docId;
       const notifyStatus = status === 'READY' ? 'completed' : status === 'FAILED' ? 'failed' : 'started';
-      await sendJobNotification({ jobType: 'documentation', status: notifyStatus, fileName, jobId: docId });
+      await sendJobNotification({ jobType: 'documentation', status: notifyStatus, fileName, jobId: docId, ownerId: agentId });
     } catch (err) {
       console.warn('Failed to send ingestion notification', err?.message || err);
     }
+  }
+
+  const stageMap = {
+    PROCESSING: { category: 'processing-kickoff', stage: 'start', eventType: 'ingest-processing' },
+    READY: { category: 'publication', stage: 'complete', eventType: 'ingest-complete' },
+    FAILED: { category: 'processing', stage: 'failure', eventType: 'ingest-failed' }
+  };
+  const mapping = stageMap[status] || { category: 'processing', stage: 'update', eventType: 'ingest-status-updated' };
+  await recordDocLog({
+    docId,
+    agentId,
+    category: mapping.category,
+    stage: mapping.stage,
+    eventType: mapping.eventType,
+    status,
+    message: `Documentation status changed to ${status}`,
+    metadata: extra && Object.keys(extra).length ? extra : undefined
+  });
+}
+
+async function recordDocLog({ docId, agentId = 'default', category, stage, eventType, status, message, metadata, chunkProgress, failureReason }) {
+  try {
+    await appendJobLog({
+      jobType: 'documentation',
+      jobId: docId,
+      ownerId: agentId || 'default',
+      category,
+      stage,
+      eventType,
+      status,
+      message,
+      actor: { type: 'system', source: 'ingest-worker', role: 'system' },
+      metadata,
+      chunkProgress,
+      failureReason
+    });
+  } catch (err) {
+    console.warn('document log append failed', err?.message || err);
   }
 }
 
@@ -394,6 +433,20 @@ exports.handler = async (event, context, callback) => {
       
     } catch (parseError) {
       console.error(`Document parsing failed for ${key}:`, parseError.message);
+      await recordDocLog({
+        docId,
+        agentId,
+        category: 'processing',
+        stage: 'failure',
+        eventType: 'parse-failed',
+        status: 'FAILED',
+        message: 'Document parsing failed',
+        metadata: {
+          contentType,
+          filename: key.split('/').pop()
+        },
+        failureReason: parseError.message
+      });
       await setStatus(docId, agentId, 'FAILED', { 
         error: `Document parsing failed: ${parseError.message}`,
         contentType,
@@ -406,9 +459,41 @@ exports.handler = async (event, context, callback) => {
 
     const chunks = chunkText(text);
     const chunkLines = chunks.map((t, i) => JSON.stringify({ idx: i, text: t }));
-    await s3.send(new PutObjectCommand({ Bucket: RAW_BUCKET, Key: `chunks/${agentId}/${docId}/chunks.jsonl`, Body: chunkLines.join('\n'), ContentType: 'application/x-ndjson' }));
+    const chunkKey = `chunks/${agentId}/${docId}/chunks.jsonl`;
+    await s3.send(new PutObjectCommand({ Bucket: RAW_BUCKET, Key: chunkKey, Body: chunkLines.join('\n'), ContentType: 'application/x-ndjson' }));
+    await recordDocLog({
+      docId,
+      agentId,
+      category: 'chunk-processing',
+      stage: 'chunk-persist',
+      eventType: 'chunks-stored',
+      status: 'PROCESSING',
+      message: `${chunks.length} chunk(s) generated and stored`,
+      metadata: {
+        chunkKey,
+        chunkCount: chunks.length,
+        textLength: text.length
+      },
+      chunkProgress: {
+        completed: chunks.length,
+        failed: 0,
+        total: chunks.length
+      }
+    });
 
     const vectors = await embedChunks(chunks);
+    await recordDocLog({
+      docId,
+      agentId,
+      category: 'chunk-processing',
+      stage: 'embedding',
+      eventType: 'chunks-embedded',
+      status: 'PROCESSING',
+      message: `${vectors.length} embeddings generated`,
+      metadata: {
+        chunkCount: chunks.length
+      }
+    });
     // Fetch doc metadata for vector metadata
     let docMeta = null;
     try {
@@ -421,8 +506,35 @@ exports.handler = async (event, context, callback) => {
     if (VEC_MODE === 's3vectors') {
       await ensureVectorIndex(vectorIndex);
       await storeVectorsS3Vectors(agentId, vectorIndex, docId, vectors, chunks, docMeta);
+      await recordDocLog({
+        docId,
+        agentId,
+        category: 'publication',
+        stage: 'indexing',
+        eventType: 'vectors-stored',
+        status: 'PROCESSING',
+        message: 'Vectors stored via S3 Vectors',
+        metadata: {
+          vectorMode: 's3vectors',
+          indexName: vectorIndex,
+          vectorCount: vectors.length
+        }
+      });
     } else if (VEC_MODE === 's3') {
       await storeVectorsS3(docId, vectors, chunks, docMeta);
+      await recordDocLog({
+        docId,
+        agentId,
+        category: 'publication',
+        stage: 'indexing',
+        eventType: 'vectors-stored',
+        status: 'PROCESSING',
+        message: 'Vectors stored via S3 object storage',
+        metadata: {
+          vectorMode: 's3',
+          vectorCount: vectors.length
+        }
+      });
     } else {
       console.log('Unknown VECTOR_MODE:', VEC_MODE);
     }

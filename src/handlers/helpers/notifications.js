@@ -1,6 +1,7 @@
 const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
 const { DynamoDBClient, GetItemCommand, PutItemCommand, ScanCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
+const { appendJobLog } = require('./jobLogs');
 
 const ses = new SESClient({});
 const ddb = new DynamoDBClient({});
@@ -99,15 +100,45 @@ function buildEmail({ jobType, status, fileName, jobId }) {
   return { subject, body: lines.join('\n') };
 }
 
-async function sendJobNotification({ jobType, status, fileName, jobId }) {
+async function logNotificationEvent({ jobType, status, fileName, jobId, ownerId = 'default', outcome }) {
+  if (!jobId) return;
+  try {
+    await appendJobLog({
+      jobType,
+      jobId,
+      ownerId: ownerId || 'default',
+      category: 'notifications',
+      stage: 'email',
+      eventType: 'notification',
+      status: status?.toUpperCase?.() || status || 'INFO',
+      message: outcome.sent ? 'Notification dispatched' : 'Notification skipped',
+      actor: { type: 'system', source: 'notifications-service', role: 'system' },
+      metadata: {
+        fileName,
+        status,
+        recipients: outcome.recipients || 0,
+        reason: outcome.reason || null,
+        error: outcome.error || null
+      }
+    });
+  } catch (err) {
+    console.warn('Failed to append notification log', err?.message || err);
+  }
+}
+
+async function sendJobNotification({ jobType, status, fileName, jobId, ownerId }) {
   if (!SES_SENDER) {
     console.warn('sendJobNotification skipped - SES_SENDER not configured');
-    return { sent: false, reason: 'no-sender' };
+    const outcome = { sent: false, reason: 'no-sender' };
+    await logNotificationEvent({ jobType, status, fileName, jobId, ownerId, outcome });
+    return outcome;
   }
   try {
     const recipients = await recipientsFor(jobType, status);
     if (!recipients.length) {
-      return { sent: false, reason: 'no-recipients' };
+      const outcome = { sent: false, reason: 'no-recipients', recipients: 0 };
+      await logNotificationEvent({ jobType, status, fileName, jobId, ownerId, outcome });
+      return outcome;
     }
     const { subject, body } = buildEmail({ jobType, status, fileName, jobId });
     await ses.send(new SendEmailCommand({
@@ -118,10 +149,14 @@ async function sendJobNotification({ jobType, status, fileName, jobId }) {
         Body: { Text: { Data: body, Charset: 'UTF-8' } }
       }
     }));
-    return { sent: true, recipients: recipients.length };
+    const outcome = { sent: true, recipients: recipients.length };
+    await logNotificationEvent({ jobType, status, fileName, jobId, ownerId, outcome });
+    return outcome;
   } catch (error) {
     console.error('sendJobNotification failed', error);
-    return { sent: false, error: error.message };
+    const outcome = { sent: false, error: error.message };
+    await logNotificationEvent({ jobType, status, fileName, jobId, ownerId, outcome });
+    return outcome;
   }
 }
 
@@ -132,4 +167,3 @@ module.exports = {
   sendJobNotification,
   normalisePreferences
 };
-

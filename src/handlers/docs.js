@@ -3,6 +3,7 @@ const { S3Client, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-s
 const { S3VectorsClient, DeleteVectorsCommand } = require('@aws-sdk/client-s3vectors');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { response } = require('./helpers/utils');
+const { appendJobLog, listJobLogs } = require('./helpers/jobLogs');
 
 const ddb = new DynamoDBClient({});
 const s3 = new S3Client({});
@@ -24,6 +25,43 @@ function parseBody(event){
   catch { return {}; }
 }
 function now(){ return new Date().toISOString(); }
+
+function requesterFrom(event) {
+  const claims = event?.requestContext?.authorizer?.jwt?.claims || {};
+  return {
+    name: claims['name'] || claims['cognito:username'] || null,
+    email: claims['email'] || null,
+    sub: claims['sub'] || null
+  };
+}
+
+function actorFrom(user, role = 'user') {
+  if (!user) return { type: 'system', role };
+  const { email = null, name = null, sub = null } = user;
+  if (!email && !name && !sub) {
+    return { type: 'system', role };
+  }
+  return { type: 'user', email, name, sub, role };
+}
+
+async function recordLog({ docId, agentId = 'default', category, stage, eventType, status, message, metadata, actor }) {
+  try {
+    await appendJobLog({
+      jobType: 'documentation',
+      jobId: docId,
+      ownerId: agentId || 'default',
+      category,
+      stage,
+      eventType,
+      status,
+      message,
+      metadata,
+      actor
+    });
+  } catch (err) {
+    console.warn('docs handler log append failed', err?.message || err);
+  }
+}
 
 async function getAgentVectorIndex(agentId){
   if (!SETTINGS_TABLE || !agentId) return agentId || VEC_INDEX;
@@ -67,7 +105,9 @@ function makeItem(input){
     size: input.size || 0,
     createdAt: input.createdAt || now(),
     updatedAt: now(),
-    status
+    status,
+    submittedByEmail: input.submittedByEmail || null,
+    submittedByName: input.submittedByName || null
   };
 }
 
@@ -77,6 +117,7 @@ exports.handler = async (event, context, callback) => {
   const method = event?.requestContext?.http?.method || event?.httpMethod || 'GET';
   const path = event?.requestContext?.http?.path || event?.requestContext?.path || '';
   const docId = event?.pathParameters?.docId;
+  const requester = requesterFrom(event);
 
   if (method === 'GET' && path.endsWith('/docs') && !docId) {
     const agentId = event?.queryStringParameters?.agentId || 'default';
@@ -93,6 +134,19 @@ exports.handler = async (event, context, callback) => {
     const res = await ddb.send(new QueryCommand(params));
     const items = (res.Items || []).map(unmarshall);
     return ok(200, { items, count: items.length, nextToken: res.LastEvaluatedKey ? Buffer.from(JSON.stringify(res.LastEvaluatedKey)).toString('base64') : null }, callback);
+  }
+
+  if (method === 'GET' && path.endsWith('/logs') && docId) {
+    const agentId = event?.queryStringParameters?.agentId || 'default';
+    const limit = Number(event?.queryStringParameters?.limit || 50);
+    const nextToken = event?.queryStringParameters?.nextToken || null;
+    try {
+      const logs = await listJobLogs({ jobType: 'documentation', jobId: docId, limit, nextToken });
+      return ok(200, logs, callback);
+    } catch (err) {
+      console.warn('docs logs retrieval failed', err?.message || err);
+      return ok(500, { message: 'Failed to fetch logs' }, callback);
+    }
   }
 
   if (method === 'GET' && docId) {
@@ -117,7 +171,19 @@ exports.handler = async (event, context, callback) => {
     const UpdateExpression = 'SET ' + ['#u = :u', ...expr].join(', ');
     await ddb.send(new UpdateItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }), UpdateExpression, ExpressionAttributeNames: names, ExpressionAttributeValues: marshall(values) }));
     const res = await ddb.send(new GetItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }) }));
-    return ok(200, unmarshall(res.Item), callback);
+    const updated = unmarshall(res.Item);
+    await recordLog({
+      docId,
+      agentId,
+      category: 'processing',
+      stage: 'metadata-update',
+      eventType: 'doc-updated',
+      status: updated.status || 'UPDATED',
+      message: 'Documentation metadata updated',
+      metadata: body,
+      actor: actorFrom(requester, 'editor')
+    });
+    return ok(200, updated, callback);
   }
 
   if (method === 'DELETE' && docId) {
@@ -164,6 +230,17 @@ exports.handler = async (event, context, callback) => {
       } catch (e) { console.log('DeleteVectors error (ignored):', e?.message || e); }
     }
     await ddb.send(new DeleteItemCommand({ TableName: TABLE, Key: marshall({ PK:`DOC#${docId}`, SK:`DOC#${agentId}` }) }));
+    await recordLog({
+      docId,
+      agentId,
+      category: 'publication',
+      stage: 'cleanup',
+      eventType: 'doc-deleted',
+      status: 'DELETED',
+      message: 'Documentation source deleted',
+      metadata: { agentId },
+      actor: actorFrom(requester, 'admin')
+    });
     return ok(200, { ok: true }, callback);
   }
 
@@ -171,8 +248,23 @@ exports.handler = async (event, context, callback) => {
   if (method === 'POST' && path.endsWith('/docs/ingest')) {
     const body = parseBody(event);
     if (!body.docId) {return ok(400, { message: 'docId is required (from upload-url response)' }, callback);}
-    const item = makeItem({ ...body, status: 'UPLOADED' });
+    const item = makeItem({ ...body, status: 'UPLOADED', submittedByEmail: requester?.email || null, submittedByName: requester?.name || null });
     await ddb.send(new PutItemCommand({ TableName: TABLE, Item: marshall(item) }));
+    await recordLog({
+      docId: item.docId,
+      agentId: item.agentId,
+      category: 'submission',
+      stage: 'intake',
+      eventType: 'doc-submitted',
+      status: item.status,
+      message: 'Documentation ingestion request submitted',
+      metadata: {
+        title: item.title,
+        sourceType: item.sourceType,
+        fileKey: item.fileKey
+      },
+      actor: actorFrom(requester, 'submitter')
+    });
     return ok(202, item, callback);
   }
 
