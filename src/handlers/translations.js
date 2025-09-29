@@ -9,7 +9,7 @@ const { response } = require('./helpers/utils');
 const { assembleHtmlDocument } = require('./helpers/documentParser');
 const { listChunks, updateChunkState, deleteAllChunks, summariseChunks } = require('./helpers/translationStore');
 const { sendJobNotification } = require('./helpers/notifications');
-const { appendTranslationLog, listTranslationLogs } = require('./helpers/translationLogs');
+const { appendJobLog, listJobLogs } = require('./helpers/jobLogs');
 const { restartTranslation: publishTranslationRestart } = require('./helpers/jobMonitor');
 
 const ddb = new DynamoDBClient({});
@@ -55,23 +55,41 @@ function reviewerFrom(event) {
   };
 }
 
-function actorFrom(reviewer) {
-  if (!reviewer) return { type: 'system' };
+function actorFrom(reviewer, role = 'user') {
+  if (!reviewer) return { type: 'system', role };
   const { email = null, name = null, sub = null } = reviewer;
   if (!email && !name && !sub) {
-    return { type: 'system' };
+    return { type: 'system', role };
   }
   return {
     type: 'user',
     email,
     name,
-    sub
+    sub,
+    role
   };
 }
 
 async function recordLog(entry) {
   try {
-    await appendTranslationLog(entry);
+    await appendJobLog({
+      jobType: 'translation',
+      jobId: entry.translationId,
+      ownerId: entry.ownerId,
+      category: entry.category,
+      stage: entry.stage,
+      eventType: entry.eventType,
+      status: entry.status,
+      statusCode: entry.statusCode,
+      message: entry.message,
+      actor: entry.actor,
+      metadata: entry.metadata,
+      context: entry.context,
+      attempt: entry.attempt,
+      retryCount: entry.retryCount,
+      failureReason: entry.failureReason,
+      chunkProgress: entry.chunkProgress
+    });
   } catch (err) {
     console.warn('translation log append failed', err?.message || err);
   }
@@ -97,6 +115,8 @@ function makeItem(input) {
     createdAt: input.createdAt || now(),
     updatedAt: now(),
     requestedBy: input.requestedBy || null,
+    requestedByEmail: input.requestedByEmail || null,
+    requestedByName: input.requestedByName || null,
     provider: input.provider || null,
     model: input.model || null
   };
@@ -169,6 +189,8 @@ async function createTranslation(body, eventOwner, requester) {
     originalFileKey: fileKey,
     status: 'PROCESSING',
     requestedBy: requester?.email || requester?.sub || null,
+    requestedByEmail: requester?.email || null,
+    requestedByName: requester?.name || null,
     createdAt: now()
   });
 
@@ -187,16 +209,19 @@ async function createTranslation(body, eventOwner, requester) {
     jobType: 'translation',
     status: 'started',
     fileName: filename,
-    jobId: translationId
+    jobId: translationId,
+    ownerId
   });
 
   await recordLog({
     translationId,
     ownerId,
+    category: 'submission',
+    stage: 'intake',
     eventType: 'submitted',
     status: 'PROCESSING',
     message: 'Translation request submitted',
-    actor: actorFrom(requester),
+    actor: actorFrom(requester, 'submitter'),
     metadata: {
       sourceLanguage,
       targetLanguage,
@@ -379,6 +404,25 @@ async function handleChunkUpdate(event, translationId, ownerId, reviewer) {
     failedChunks: summary.failed
   });
 
+  await recordLog({
+    translationId,
+    ownerId,
+    category: 'review',
+    stage: 'chunk-edit',
+    eventType: 'chunks-updated',
+    status: 'IN_REVIEW',
+    message: `Reviewer updated ${body.chunks.length} chunk(s)`,
+    actor: actorFrom(reviewer, 'reviewer'),
+    metadata: {
+      updatedChunkIds: body.chunks.map(chunk => chunk.id)
+    },
+    chunkProgress: {
+      completed: summary.completed,
+      failed: summary.failed,
+      total: summary.total
+    }
+  });
+
   return {
     headHtml: item.headHtml,
     chunks: normalized,
@@ -447,19 +491,26 @@ async function handleApprove(translationId, ownerId, reviewer) {
   await recordLog({
     translationId,
     ownerId,
+    category: 'review',
+    stage: 'approval',
     eventType: 'approved',
     status: 'APPROVED',
     message: 'Translation approved',
-    actor: actorFrom(reviewer),
+    actor: actorFrom(reviewer, 'reviewer'),
     metadata: {
       translatedFileKey: docxKey || htmlKey,
       translatedFormat: docxKey ? 'docx' : 'html'
+    },
+    chunkProgress: {
+      completed: normalized.length,
+      failed: 0,
+      total: normalized.length
     }
   });
   return statusPatch;
 }
 
-async function handleDownload(translationId, ownerId, type) {
+async function handleDownload(translationId, ownerId, type, requester) {
   const item = await getTranslation(translationId, ownerId);
   if (!item) throw new Error('Translation not found');
   const mapping = {
@@ -477,6 +528,17 @@ async function handleDownload(translationId, ownerId, type) {
     throw Object.assign(new Error('Requested asset missing from storage'), { code: 'NotFound', key });
   }
   const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: RAW_BUCKET, Key: key }), { expiresIn: 900 });
+  await recordLog({
+    translationId,
+    ownerId,
+    category: 'distribution',
+    stage: 'download',
+    eventType: 'download-request',
+    status: 'SUCCESS',
+    message: `Download URL generated for ${type}`,
+    actor: actorFrom(requester, 'user'),
+    metadata: { key, type }
+  });
   return { url, key };
 }
 
@@ -534,10 +596,12 @@ async function handleDelete(translationId, ownerId, reviewer) {
   await recordLog({
     translationId,
     ownerId,
+    category: 'distribution',
+    stage: 'cleanup',
     eventType: 'deleted',
     status: 'DELETED',
     message: 'Translation deleted',
-    actor: actorFrom(reviewer),
+    actor: actorFrom(reviewer, 'admin'),
     metadata: {
       deletedKeys: keysToDelete.length,
       statusBeforeDelete: item.status
@@ -627,10 +691,12 @@ exports.handler = async (event, context, callback) => {
       await recordLog({
         translationId,
         ownerId,
+        category: 'health-monitoring',
+        stage: 'manual-restart',
         eventType: 'restart-requested',
         status: 'PROCESSING',
         message: 'Manual restart requested by administrator',
-        actor: actorFrom(reviewer)
+        actor: actorFrom(reviewer, 'admin')
       });
       await publishTranslationRestart(translationId, ownerId);
       return ok(202, { message: 'Restart queued' }, callback);
@@ -643,7 +709,7 @@ exports.handler = async (event, context, callback) => {
       }
       const limit = Number(event?.queryStringParameters?.limit) || 50;
       const nextToken = event?.queryStringParameters?.nextToken || null;
-      const logs = await listTranslationLogs({ translationId, limit, nextToken });
+      const logs = await listJobLogs({ jobType: 'translation', jobId: translationId, limit, nextToken });
       return ok(200, logs, callback);
     }
 
@@ -692,7 +758,7 @@ exports.handler = async (event, context, callback) => {
     if (method === 'GET' && path.endsWith('/download')) {
       const type = event?.queryStringParameters?.type || 'original';
       console.log('download request', { translationId, type });
-      const res = await handleDownload(translationId, ownerId, type);
+      const res = await handleDownload(translationId, ownerId, type, reviewer);
       return ok(200, res, callback);
     }
 

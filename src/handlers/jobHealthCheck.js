@@ -10,7 +10,7 @@ const {
   invokeIngestWorker,
   sendJobNotification
 } = require('./helpers/jobMonitor');
-const { appendTranslationLog } = require('./helpers/translationLogs');
+const { appendJobLog } = require('./helpers/jobLogs');
 
 const ddb = new DynamoDBClient({});
 
@@ -89,19 +89,23 @@ async function markDocFailed(doc, reason) {
     jobType: 'documentation',
     status: 'failed',
     fileName: doc.title || doc.fileKey?.split('/').pop() || doc.docId,
-    jobId: doc.docId
+    jobId: doc.docId,
+    ownerId: doc.agentId || 'default'
   });
 }
 
 async function recordRestartLog(translationId, ownerId, reason) {
   try {
-    await appendTranslationLog({
-      translationId,
+    await appendJobLog({
+      jobType: 'translation',
+      jobId: translationId,
       ownerId,
+      category: 'health-monitoring',
+      stage: 'auto-restart',
       eventType: 'restart-requested',
       status: 'PROCESSING',
       message: 'Translation restart triggered by health check',
-      actor: { type: 'system', source: 'health-check' },
+      actor: { type: 'system', source: 'health-check', role: 'system' },
       metadata: { reason }
     });
   } catch (err) {
@@ -134,7 +138,20 @@ exports.handler = async () => {
         jobType: 'translation',
         status: 'failed',
         fileName: translation.originalFilename || translation.title || translation.translationId,
-        jobId: report.translationId
+        jobId: report.translationId,
+        ownerId: report.ownerId
+      });
+      await appendJobLog({
+        jobType: 'translation',
+        jobId: report.translationId,
+        ownerId: report.ownerId,
+        category: 'health-monitoring',
+        stage: 'auto-fail',
+        eventType: 'health-check-failed',
+        status: 'FAILED',
+        message: 'Translation marked failed after exceeding health check retries',
+        actor: { type: 'system', source: 'health-check', role: 'system' },
+        metadata: { reason, retries }
       });
       result.translationsFailed += 1;
       continue;
@@ -152,14 +169,37 @@ exports.handler = async () => {
     const retries = await incrementDocRetry(doc.docId, doc.agentId || 'default', 'stale');
     if (retries > RETRY_LIMIT) {
       await markDocFailed(doc, 'Stale ingestion detected by health check');
+      await appendJobLog({
+        jobType: 'documentation',
+        jobId: doc.docId,
+        ownerId: doc.agentId || 'default',
+        category: 'health-monitoring',
+        stage: 'auto-fail',
+        eventType: 'health-check-failed',
+        status: 'FAILED',
+        message: 'Documentation ingestion marked failed after exceeding health check retries',
+        actor: { type: 'system', source: 'health-check', role: 'system' },
+        metadata: { reason: 'stale', retries }
+      });
       result.docsFailed += 1;
       continue;
     }
     await invokeIngestWorker(doc);
+    await appendJobLog({
+      jobType: 'documentation',
+      jobId: doc.docId,
+      ownerId: doc.agentId || 'default',
+      category: 'health-monitoring',
+      stage: 'auto-restart',
+      eventType: 'restart-requested',
+      status: 'PROCESSING',
+      message: 'Documentation ingestion restart triggered by health check',
+      actor: { type: 'system', source: 'health-check', role: 'system' },
+      metadata: { retries }
+    });
     result.docsRestarted += 1;
   }
 
   console.log('jobHealthCheck summary', result);
   return result;
 };
-

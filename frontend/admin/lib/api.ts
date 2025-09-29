@@ -146,16 +146,24 @@ export type TranslationChunk = {
   reviewerName?: string;
 };
 
-export type TranslationLogEntry = {
+export type JobLogEntry = {
   logId?: string;
-  translationId: string;
+  jobType: 'translation' | 'documentation';
+  jobId: string;
   ownerId: string;
   createdAt: string;
+  category?: string | null;
+  stage?: string | null;
   eventType: string;
   status?: string | null;
+  statusCode?: number | null;
   message?: string | null;
-  actor?: { type?: string; email?: string | null; name?: string | null; sub?: string | null; source?: string } | null;
+  actor?: { type?: string; email?: string | null; name?: string | null; sub?: string | null; source?: string | null; role?: string | null } | null;
   metadata?: Record<string, any> | null;
+  chunkProgress?: { completed?: number | null; failed?: number | null; total?: number | null } | null;
+  attempt?: number | null;
+  retryCount?: number | null;
+  failureReason?: string | null;
 };
 
 export async function createTranslationUploadUrl(filename: string, contentType: string){
@@ -259,7 +267,20 @@ export async function listTranslationLogs(translationId: string, nextToken?: str
     headers: { ...(await authHeader()) }
   });
   if (!res.ok) throw new Error(`list translation logs ${res.status}`);
-  return res.json() as Promise<{ items: TranslationLogEntry[]; nextToken?: string | null }>;
+  return res.json() as Promise<{ items: JobLogEntry[]; nextToken?: string | null }>;
+}
+
+export async function listDocumentationLogs(docId: string, agentId: string, nextToken?: string, limit = 20){
+  const params = new URLSearchParams();
+  if (agentId) params.set('agentId', agentId);
+  if (nextToken) params.set('nextToken', nextToken);
+  if (limit) params.set('limit', String(limit));
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${cfg.apiBase}/docs/${encodeURIComponent(docId)}/logs${qs}`, {
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`list documentation logs ${res.status}`);
+  return res.json() as Promise<{ items: JobLogEntry[]; nextToken?: string | null }>;
 }
 
 // Infer API

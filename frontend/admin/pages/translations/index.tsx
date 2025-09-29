@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import Layout from '../../components/Layout';
 import {
@@ -11,7 +11,7 @@ import {
   listTranslationLogs,
   inferDoc,
   type TranslationItem,
-  type TranslationLogEntry
+  type JobLogEntry
 } from '../../lib/api';
 import TranslationLogsIcon from '../../components/TranslationLogsIcon';
 
@@ -20,15 +20,100 @@ const LANG_OPTIONS = [
   { label: 'French', value: 'fr' }
 ];
 
+const CATEGORY_ORDER = [
+  'submission',
+  'processing-kickoff',
+  'processing',
+  'chunk-processing',
+  'reassembly',
+  'review',
+  'publication',
+  'distribution',
+  'notifications',
+  'health-monitoring',
+  'uncategorized'
+];
+
+const CATEGORY_LABELS: Record<string, string> = {
+  submission: 'Submission & Intake',
+  'processing-kickoff': 'Processing Kickoff',
+  processing: 'Processing Updates',
+  'chunk-processing': 'Chunk Translation Progress',
+  reassembly: 'Reassembly & Assets',
+  review: 'Review & Approval',
+  publication: 'Publication & Availability',
+  distribution: 'Distribution & Archival',
+  notifications: 'Notifications',
+  'health-monitoring': 'Health Monitoring',
+  uncategorized: 'Other'
+};
+
+const STAGE_LABELS: Record<string, string> = {
+  intake: 'Intake',
+  start: 'Start',
+  queue: 'Queue',
+  'document-parse': 'Document Parsing',
+  'asset-preparation': 'Asset Preparation',
+  'chunk-edit': 'Chunk Review',
+  approval: 'Approval',
+  download: 'Download',
+  cleanup: 'Cleanup',
+  'manual-restart': 'Manual Restart',
+  'auto-restart': 'Automatic Restart',
+  'auto-fail': 'Automatic Failure',
+  'chunk-persist': 'Chunk Persist',
+  'machine-output': 'Machine Output',
+  'machine-translation': 'Machine Translation',
+  embedding: 'Embedding',
+  indexing: 'Indexing',
+  'metadata-update': 'Metadata Update'
+};
+
+function formatCategory(category?: string | null): string {
+  if (!category) return CATEGORY_LABELS.uncategorized;
+  return CATEGORY_LABELS[category] || category.split(/[-_]/).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
+function formatStage(stage?: string | null): string {
+  if (!stage) return '—';
+  return STAGE_LABELS[stage] || stage.split(/[-_]/).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
+function groupLogs(entries: JobLogEntry[]): Record<string, JobLogEntry[]> {
+  return entries.reduce<Record<string, JobLogEntry[]>>((acc, entry) => {
+    const key = entry.category || 'uncategorized';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(entry);
+    return acc;
+  }, {});
+}
+
+function sortCategories(keys: string[]): string[] {
+  return [...keys].sort((a, b) => {
+    const ai = CATEGORY_ORDER.indexOf(a);
+    const bi = CATEGORY_ORDER.indexOf(b);
+    if (ai === -1 && bi === -1) return a.localeCompare(b);
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+}
+
+function formatActor(actor?: JobLogEntry['actor']): string {
+  if (!actor) return 'Unknown';
+  return actor.name || actor.email || actor.sub || actor.source || (actor.type === 'system' ? 'System' : actor.type) || 'Unknown';
+}
+
 type LogsModalState = {
   open: boolean;
   translationId: string | null;
   title: string;
-  entries: TranslationLogEntry[];
+  entries: JobLogEntry[];
   loading: boolean;
   loadingMore: boolean;
   nextToken: string | null;
   error: string | null;
+  expanded: Record<string, boolean>;
 };
 
 const LOGS_MODAL_DEFAULT: LogsModalState = {
@@ -39,7 +124,8 @@ const LOGS_MODAL_DEFAULT: LogsModalState = {
   loading: false,
   loadingMore: false,
   nextToken: null,
-  error: null
+  error: null,
+  expanded: {}
 };
 
 function statusLabel(status: string) {
@@ -309,11 +395,18 @@ export default function TranslationsPage() {
     });
     try {
       const res = await listTranslationLogs(item.translationId);
+      const entries = res.items || [];
+      const grouped = groupLogs(entries);
+      const expanded = Object.keys(grouped).reduce<Record<string, boolean>>((acc, key) => {
+        acc[key] = true;
+        return acc;
+      }, {});
       setLogsModal(prev => ({
         ...prev,
         loading: false,
-        entries: res.items || [],
-        nextToken: res.nextToken || null
+        entries,
+        nextToken: res.nextToken || null,
+        expanded
       }));
     } catch (err: any) {
       setLogsModal(prev => ({
@@ -335,12 +428,23 @@ export default function TranslationsPage() {
     setLogsModal(prev => ({ ...prev, loadingMore: true, error: null }));
     try {
       const res = await listTranslationLogs(translationId, token);
-      setLogsModal(prev => ({
-        ...prev,
-        loadingMore: false,
-        entries: [...prev.entries, ...(res.items || [])],
-        nextToken: res.nextToken || null
-      }));
+      setLogsModal(prev => {
+        const mergedEntries = [...prev.entries, ...(res.items || [])];
+        const grouped = groupLogs(mergedEntries);
+        const expanded = { ...prev.expanded };
+        Object.keys(grouped).forEach(key => {
+          if (typeof expanded[key] === 'undefined') {
+            expanded[key] = true;
+          }
+        });
+        return {
+          ...prev,
+          loadingMore: false,
+          entries: mergedEntries,
+          nextToken: res.nextToken || null,
+          expanded
+        };
+      });
     } catch (err: any) {
       setLogsModal(prev => ({
         ...prev,
@@ -369,6 +473,19 @@ export default function TranslationsPage() {
   const prevent = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
+  }, []);
+
+  const groupedLogs = useMemo(() => groupLogs(logsModal.entries), [logsModal.entries]);
+  const orderedCategories = useMemo(() => sortCategories(Object.keys(groupedLogs)), [groupedLogs]);
+
+  const toggleCategoryVisibility = useCallback((category: string) => {
+    setLogsModal(prev => ({
+      ...prev,
+      expanded: {
+        ...prev.expanded,
+        [category]: !prev.expanded?.[category]
+      }
+    }));
   }, []);
 
   return (
@@ -916,43 +1033,117 @@ export default function TranslationsPage() {
 
             {logsModal.loading ? (
               <div className="muted" style={{ padding: '24px 0' }}>Loading logs…</div>
-            ) : logsModal.entries.length ? (
+            ) : orderedCategories.length ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {logsModal.entries.map((entry, idx) => {
-                  const actor = entry.actor;
-                  const actorLabel = actor?.name || actor?.email || actor?.sub || (actor?.type === 'system' ? 'System' : actor?.type) || 'Unknown';
+                {orderedCategories.map(category => {
+                  const entries = groupedLogs[category] || [];
+                  const key = category || 'uncategorized';
+                  const expanded = logsModal.expanded[key] ?? true;
+                  const latest = entries[0];
+                  const latestSummary = latest ? (latest.message || latest.eventType) : 'No activity yet';
+                  const latestStatus = latest?.status || '—';
                   return (
                     <div
-                      key={entry.logId || `${entry.createdAt}-${idx}`}
+                      key={key}
                       style={{
                         border: '1px solid rgba(148,163,184,0.25)',
-                        borderRadius: 8,
+                        borderRadius: 10,
                         padding: 12,
-                        background: 'rgba(15,23,42,0.6)'
+                        background: 'rgba(15,23,42,0.65)'
                       }}
                     >
-                      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-                        <div style={{ fontWeight: 600 }}>{entry.message || entry.eventType}</div>
-                        <div className="muted mini" style={{ color: '#94a3b8' }}>{new Date(entry.createdAt).toLocaleString()}</div>
-                      </div>
-                      <div className="muted mini" style={{ color: '#a5b4fc', marginBottom: entry.metadata ? 8 : 0 }}>
-                        Status: {entry.status || '—'} · Actor: {actorLabel}
-                      </div>
-                      {entry.metadata && (
-                        <pre
-                          style={{
-                            margin: 0,
-                            padding: 12,
-                            borderRadius: 6,
-                            background: 'rgba(30,41,59,0.8)',
-                            border: '1px solid rgba(148,163,184,0.2)',
-                            fontSize: 12,
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word'
-                          }}
-                        >
-                          {JSON.stringify(entry.metadata, null, 2)}
-                        </pre>
+                      <button
+                        onClick={() => toggleCategoryVisibility(key)}
+                        style={{
+                          width: '100%',
+                          border: 'none',
+                          background: 'transparent',
+                          color: '#f8fafc',
+                          textAlign: 'left',
+                          padding: 0,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 15 }}>{formatCategory(category)}</div>
+                            <div className="muted mini" style={{ color: '#94a3b8' }}>
+                              Latest: {latestSummary} · Status: {latestStatus}
+                            </div>
+                          </div>
+                          <div className="muted mini" style={{ color: '#cbd5e1' }}>{expanded ? 'Hide' : 'Show'}</div>
+                        </div>
+                      </button>
+                      {expanded && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
+                          {entries.map((entry, idx) => {
+                            const actorLabel = formatActor(entry.actor);
+                            const chunk = entry.chunkProgress;
+                            const total = chunk?.total ?? null;
+                            const completed = chunk?.completed ?? null;
+                            const failed = chunk?.failed ?? null;
+                            const percent = total && completed !== null ? Math.round((completed / total) * 100) : null;
+                            return (
+                              <div
+                                key={entry.logId || `${entry.createdAt}-${idx}`}
+                                style={{
+                                  border: '1px solid rgba(148,163,184,0.2)',
+                                  borderRadius: 8,
+                                  padding: 12,
+                                  background: 'rgba(15,23,42,0.48)'
+                                }}
+                              >
+                                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                                  <div style={{ fontWeight: 600 }}>{entry.message || entry.eventType}</div>
+                                  <div className="muted mini" style={{ color: '#94a3b8' }}>{new Date(entry.createdAt).toLocaleString()}</div>
+                                </div>
+                                <div className="muted mini" style={{ color: '#a5b4fc', marginBottom: 6 }}>
+                                  Stage: {formatStage(entry.stage)} · Status: {entry.status || '—'} · Actor: {actorLabel}
+                                  {typeof entry.attempt === 'number' && entry.attempt > 0 && (
+                                    <> · Attempt #{entry.attempt}</>
+                                  )}
+                                  {typeof entry.retryCount === 'number' && entry.retryCount > 0 && (
+                                    <> · Retries {entry.retryCount}</>
+                                  )}
+                                </div>
+                                {chunk && total && (
+                                  <div className="muted mini" style={{ color: '#cbd5e1', marginBottom: 6 }}>
+                                    Progress: {completed ?? 0}/{total} {failed ? `(failed ${failed})` : ''} {percent !== null ? `· ${percent}%` : ''}
+                                  </div>
+                                )}
+                                {entry.failureReason && (
+                                  <div className="chip mini" style={{
+                                    marginBottom: 6,
+                                    borderColor: 'rgba(220,38,38,0.5)',
+                                    background: 'rgba(220,38,38,0.12)',
+                                    color: '#fecaca'
+                                  }}>
+                                    Failure: {entry.failureReason}
+                                  </div>
+                                )}
+                                {entry.metadata && (
+                                  <details style={{ marginTop: 6 }}>
+                                    <summary className="muted mini" style={{ color: '#cbd5e1', cursor: 'pointer' }}>Metadata</summary>
+                                    <pre
+                                      style={{
+                                        margin: '6px 0 0',
+                                        padding: 12,
+                                        borderRadius: 6,
+                                        background: 'rgba(30,41,59,0.85)',
+                                        border: '1px solid rgba(148,163,184,0.2)',
+                                        fontSize: 12,
+                                        whiteSpace: 'pre-wrap',
+                                        wordBreak: 'break-word'
+                                      }}
+                                    >
+                                      {JSON.stringify(entry.metadata, null, 2)}
+                                    </pre>
+                                  </details>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
                   );
