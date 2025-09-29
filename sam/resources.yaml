@@ -425,6 +425,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${ProjectName}-${Stage}-translations"
+      MemorySize: 1024
+      Timeout: 360
       CodeUri: ../src
       Handler: handlers/translations.handler
       Environment:
