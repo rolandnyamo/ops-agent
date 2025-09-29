@@ -914,6 +914,11 @@ Resources:
                 - cognito-idp:AdminGetUser
                 - cognito-idp:AdminListGroupsForUser
               Resource: !GetAtt UserPool.Arn
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource: "*"
 
 Outputs:
   ApiEndpoint:
