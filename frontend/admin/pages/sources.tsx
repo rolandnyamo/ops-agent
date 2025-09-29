@@ -4,6 +4,32 @@ import { createUploadUrl, deleteDoc, ingestDoc, listDocs, updateDoc, inferDoc, g
 import { useAgent } from '../lib/agent';
 import TranslationLogsIcon from '../components/TranslationLogsIcon';
 
+type LogsModalState = {
+  open: boolean;
+  docId: string | null;
+  agentId: string | null;
+  title: string;
+  entries: JobLogEntry[];
+  loading: boolean;
+  loadingMore: boolean;
+  nextToken: string | null;
+  error: string | null;
+  expanded: Record<string, boolean>;
+};
+
+const LOGS_MODAL_DEFAULT: LogsModalState = {
+  open: false,
+  docId: null,
+  agentId: null,
+  title: '',
+  entries: [],
+  loading: false,
+  loadingMore: false,
+  nextToken: null,
+  error: null,
+  expanded: {}
+};
+
 export default function Sources(){
   const { agentId } = useAgent();
   const [items, setItems] = useState<DocItem[]>([]);
@@ -100,32 +126,6 @@ function formatActor(actor?: JobLogEntry['actor']): string {
   if (!actor) return 'Unknown';
   return actor.name || actor.email || actor.sub || actor.source || (actor.type === 'system' ? 'System' : actor.type) || 'Unknown';
 }
-
-type LogsModalState = {
-  open: boolean;
-  docId: string | null;
-  agentId: string | null;
-  title: string;
-  entries: JobLogEntry[];
-  loading: boolean;
-  loadingMore: boolean;
-  nextToken: string | null;
-  error: string | null;
-  expanded: Record<string, boolean>;
-};
-
-const LOGS_MODAL_DEFAULT: LogsModalState = {
-  open: false,
-  docId: null,
-  agentId: null,
-  title: '',
-  entries: [],
-  loading: false,
-  loadingMore: false,
-  nextToken: null,
-  error: null,
-  expanded: {}
-};
 
   function formatDate(dateStr: string): string {
     const date = new Date(dateStr);
