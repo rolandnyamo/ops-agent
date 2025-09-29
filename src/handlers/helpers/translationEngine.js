@@ -87,10 +87,10 @@ async function translateChunkOpenAI({ html, sourceLanguage, targetLanguage, mode
   const tagHint = describeTagPath(html);
   const maxRetries = 1;
 
-  const systemPrompt = `You are a professional translator. Translate the incoming HTML snippet from ${sourceLanguage} to ${targetLanguage}. Preserve ALL HTML tags and attributes exactly as provided. Only translate human readable text content. Return valid HTML for the snippet with identical structure. Do not wrap the response in any extra tags or metadata.`;
+  const systemPrompt = `You are a professional translator. Translate the incoming HTML snippet from ${sourceLanguage} to ${targetLanguage}. Preserve ALL HTML tags and attributes exactly as provided. Spans with class \\"asset-anchor\\" (or elements with translate=\\"no\\") are asset placeholders and must remain unchanged. Only translate human readable text content. Return valid HTML for the snippet with identical structure. Do not wrap the response in any extra tags or metadata.`;
   const correctivePrompt = attempt > 0
-    ? `IMPORTANT: The snippet uses the following HTML element path: ${tagHint}. The translation must keep the exact same tags and structure. Respond only with the translated snippet content. Do not add wrapper tags such as <snippet> or <html>.`
-    : `The snippet may contain inline tags. Keep them intact and respond only with the translated snippet content.`;
+    ? `IMPORTANT: The snippet uses the following HTML element path: ${tagHint}. The translation must keep the exact same tags, attributes, and any asset-anchor spans untouched. Respond only with the translated snippet content. Do not add wrapper tags such as <snippet> or <html>.`
+    : `The snippet may contain inline tags and asset-anchor spans. Keep them intact and respond only with the translated snippet content.`;
 
   try {
     const resp = await openai.responses.create({
