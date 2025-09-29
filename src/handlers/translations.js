@@ -275,7 +275,9 @@ function normaliseChunkRecord(record) {
     reviewerHtml: record.reviewerHtml || null,
     lastUpdatedBy: record.lastUpdatedBy || null,
     lastUpdatedAt: record.lastUpdatedAt || record.updatedAt || null,
-    reviewerName: record.reviewerName || null
+    reviewerName: record.reviewerName || null,
+    blockId: record.blockId || null,
+    assetAnchors: record.assetAnchors || []
   };
 }
 

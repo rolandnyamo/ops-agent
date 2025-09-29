@@ -53,7 +53,9 @@ async function ensureChunkSource({ translationId, ownerId = 'default', chunk }) 
     '#status': 'status',
     '#sourceHtml': 'sourceHtml',
     '#sourceText': 'sourceText',
-    '#createdAt': 'createdAt'
+    '#createdAt': 'createdAt',
+    '#blockId': 'blockId',
+    '#assetAnchors': 'assetAnchors'
   };
   const values = marshall({
     ':updatedAt': now(),
@@ -62,12 +64,14 @@ async function ensureChunkSource({ translationId, ownerId = 'default', chunk }) 
     ':status': 'PENDING',
     ':sourceHtml': chunk.sourceHtml || '',
     ':sourceText': chunk.sourceText || '',
-    ':createdAt': now()
+    ':createdAt': now(),
+    ':blockId': chunk.blockId || chunk.id,
+    ':assetAnchors': chunk.anchorIds || []
   });
   const res = await ddb.send(new UpdateItemCommand({
     TableName: DOCS_TABLE,
     Key: marshall(key),
-    UpdateExpression: 'SET #updatedAt = :updatedAt, #chunkId = :chunkId, #order = :order, #sourceHtml = :sourceHtml, #sourceText = :sourceText, #status = if_not_exists(#status, :status), #createdAt = if_not_exists(#createdAt, :createdAt)',
+    UpdateExpression: 'SET #updatedAt = :updatedAt, #chunkId = :chunkId, #order = :order, #sourceHtml = :sourceHtml, #sourceText = :sourceText, #blockId = :blockId, #assetAnchors = :assetAnchors, #status = if_not_exists(#status, :status), #createdAt = if_not_exists(#createdAt, :createdAt)',
     ExpressionAttributeNames: names,
     ExpressionAttributeValues: values,
     ReturnValues: 'ALL_NEW'

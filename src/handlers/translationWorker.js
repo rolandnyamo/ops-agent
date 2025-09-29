@@ -2,6 +2,7 @@ const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/clien
 const { DynamoDBClient, GetItemCommand, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { prepareTranslationDocument, assembleHtmlDocument } = require('./helpers/documentParser');
+const { persistAssetsAndAnchors } = require('./helpers/assetStore');
 const { getTranslationEngine } = require('./helpers/translationEngine');
 const { ensureChunkSource, listChunks, updateChunkState, summariseChunks } = require('./helpers/translationStore');
 const { sendJobNotification } = require('./helpers/notifications');
@@ -177,6 +178,42 @@ exports.handler = async (event) => {
       return;
     }
 
+    let assetContext = { assets: [], anchors: [] };
+    let enrichedAssets = document.assets || [];
+    let resolvedAnchors = document.anchors || [];
+    try {
+      assetContext = await persistAssetsAndAnchors({
+        s3,
+        ddb,
+        bucket: RAW_BUCKET,
+        tableName: DOCS_TABLE,
+        translationId,
+        ownerId,
+        assets: document.assets || [],
+        anchors: document.anchors || []
+      });
+      if (assetContext?.assets?.length) {
+        const assetMap = new Map(assetContext.assets.map(asset => [asset.assetId, asset]));
+        enrichedAssets = (document.assets || []).map(asset => {
+          const stored = assetMap.get(asset.assetId);
+          if (!stored) return asset;
+          return { ...asset, s3Bucket: stored.s3Bucket || null, s3Key: stored.s3Key || null };
+        });
+      }
+      if (assetContext?.anchors?.length) {
+        resolvedAnchors = assetContext.anchors;
+      }
+    } catch (assetErr) {
+      await failTranslation({
+        translationId,
+        ownerId,
+        errorMessage: 'Failed to persist asset metadata',
+        context: { error: assetErr.message },
+        fileName: item.originalFilename
+      });
+      return;
+    }
+
     let engine;
     try {
       engine = await getTranslationEngine();
@@ -210,7 +247,8 @@ exports.handler = async (event) => {
       totalChunks: document.chunks.length,
       processedChunks: chunkSummary.completed,
       failedChunks: chunkSummary.failed,
-      headHtml: document.headHtml
+      headHtml: document.headHtml,
+      assetCount: enrichedAssets.length
     });
 
     let translations = [];
@@ -281,6 +319,8 @@ exports.handler = async (event) => {
     const normalizedChunks = finalChunks.map(chunk => ({
       id: chunk.chunkId,
       order: chunk.order,
+      blockId: chunk.blockId || chunk.chunkId,
+      assetAnchors: chunk.assetAnchors || [],
       sourceHtml: chunk.sourceHtml,
       sourceText: chunk.sourceText,
       machineHtml: chunk.machineHtml,
@@ -292,6 +332,26 @@ exports.handler = async (event) => {
       reviewerName: chunk.reviewerName || null
     }));
 
+    const serializedAssets = assetContext.assets && assetContext.assets.length
+      ? assetContext.assets
+      : enrichedAssets.map(asset => ({
+          assetId: asset.assetId,
+          mime: asset.mime,
+          bytes: asset.bytes ?? (asset.buffer ? asset.buffer.length : 0),
+          widthPx: asset.widthPx || null,
+          heightPx: asset.heightPx || null,
+          keepOriginalLanguage: Boolean(asset.keepOriginalLanguage),
+          altText: asset.altText || '',
+          caption: asset.caption || null,
+          s3Bucket: asset.s3Bucket || null,
+          s3Key: asset.s3Key || null,
+          originalName: asset.originalName || null
+        }));
+
+    const serializedAnchors = assetContext.anchors && assetContext.anchors.length
+      ? assetContext.anchors
+      : resolvedAnchors;
+
     const payload = {
       translationId,
       generatedAt: now(),
@@ -300,7 +360,9 @@ exports.handler = async (event) => {
       provider: engine.name,
       model: engine.model,
       headHtml: document.headHtml,
-      chunks: normalizedChunks
+      chunks: normalizedChunks,
+      assets: serializedAssets,
+      anchors: serializedAnchors
     };
 
     const chunkKey = `translations/chunks/${ownerId}/${translationId}.json`;
@@ -314,7 +376,9 @@ exports.handler = async (event) => {
 
     const machineHtml = assembleHtmlDocument({
       headHtml: document.headHtml,
-      chunks: normalizedChunks
+      chunks: normalizedChunks,
+      assets: enrichedAssets,
+      anchors: resolvedAnchors
     });
     const machineKey = `translations/machine/${ownerId}/${translationId}.html`;
     try {
@@ -335,6 +399,7 @@ exports.handler = async (event) => {
       model: engine.model,
       processedChunks: normalizedChunks.length,
       failedChunks: 0,
+      assetCount: enrichedAssets.length,
       healthCheckRetries: 0,
       healthCheckReason: null
     });
@@ -349,6 +414,7 @@ exports.handler = async (event) => {
         chunkFileKey: chunkKey,
         machineFileKey: machineKey,
         chunkCount: normalizedChunks.length,
+        assetCount: enrichedAssets.length,
         provider: engine.name,
         model: engine.model
       }
