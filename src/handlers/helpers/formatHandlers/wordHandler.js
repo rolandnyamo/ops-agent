@@ -14,32 +14,33 @@ function normaliseAltText(text) {
 }
 
 // Safely create promisified version of textract
-const textractFromBufferWithType = textract && textract.fromBufferWithType 
+const textractFromBufferWithType = textract && textract.fromBufferWithType
   ? promisify(textract.fromBufferWithType.bind(textract))
   : null;
 
 /**
  * Handles Microsoft Word documents (both DOC and DOCX formats)
  */
-async function parseWordDocument(buffer, contentType, filename = 'document') {
-  const isDocx = filename.toLowerCase().endsWith('.docx') || 
-                 contentType.includes('officedocument.wordprocessingml.document');
-  const isDoc = filename.toLowerCase().endsWith('.doc') || 
-                contentType.includes('application/msword');
+function parseWordDocument(buffer, contentType, filename = 'document') {
+  const safeContentType = contentType || '';
+  const isDocx = filename.toLowerCase().endsWith('.docx') ||
+                 safeContentType.includes('officedocument.wordprocessingml.document');
+  const isDoc = filename.toLowerCase().endsWith('.doc') ||
+                safeContentType.includes('application/msword');
 
   if (isDocx) {
-    return await parseDocx(buffer, filename);
+    return parseDocx(buffer, filename);
   } else if (isDoc) {
-    return await parseDoc(buffer, filename);
+    return parseDoc(buffer, filename);
   } else {
-    throw new Error(`Unsupported Word document format: ${contentType}`);
+    throw new Error(`Unsupported Word document format: ${safeContentType || 'unknown'}`);
   }
 }
 
 /**
  * Parse modern DOCX files using mammoth
  */
-async function parseDocx(buffer, filename) {
+async function parseDocx(buffer, _filename) {
   try {
     const imageRegistry = new Map();
     let imageIndex = 0;
@@ -49,7 +50,7 @@ async function parseDocx(buffer, filename) {
       convertImage: mammoth.images.inline(async element => {
         try {
           const imageBuffer = await element.read();
-          if (!imageBuffer) return {};
+          if (!imageBuffer) {return {};}
           const assetId = computeAssetId(imageBuffer);
           const token = createDeterministicId('docx-image', [assetId, imageIndex++]);
           const mime = element.contentType || 'application/octet-stream';
@@ -92,10 +93,10 @@ async function parseDocx(buffer, filename) {
         }
       }),
       styleMap: [
-        "p[style-name='Heading 1'] => h1:fresh",
-        "p[style-name='Heading 2'] => h2:fresh",
-        "p[style-name='Heading 3'] => h3:fresh",
-        "p[style-name='Title'] => h1.title:fresh"
+        'p[style-name=\'Heading 1\'] => h1:fresh',
+        'p[style-name=\'Heading 2\'] => h2:fresh',
+        'p[style-name=\'Heading 3\'] => h3:fresh',
+        'p[style-name=\'Title\'] => h1.title:fresh'
       ]
     });
 
@@ -120,14 +121,14 @@ async function parseDocx(buffer, filename) {
 /**
  * Parse legacy DOC files using textract
  */
-async function parseDoc(buffer, filename) {
+async function parseDoc(buffer, _filename) {
   if (!textractFromBufferWithType) {
     throw new Error('Legacy DOC format parsing not available. Please convert to DOCX format or install textract dependencies.');
   }
-  
+
   try {
     const text = await textractFromBufferWithType('application/msword', buffer);
-    
+
     return {
       text: text || '',
       html: null, // Legacy DOC doesn't preserve structure as well
