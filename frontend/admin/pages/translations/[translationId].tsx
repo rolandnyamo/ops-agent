@@ -404,7 +404,7 @@ export default function TranslationDetailPage() {
     const getCols = () => {
       const style = window.getComputedStyle(gridRef.current!);
       const [left, gap, right] = style.gridTemplateColumns.split(' ');
-      return [parseFloat(left), gap, parseFloat(right)];
+      return [parseFloat(left || '1'), gap, parseFloat(right || '1')];
     };
 
     const setCols = (leftFr: number) => {
@@ -427,7 +427,7 @@ export default function TranslationDetailPage() {
 
     const onMouseDown = (e: MouseEvent) => {
       const [left] = getCols();
-      startLeftFr = left;
+      startLeftFr = left as number;
       startX = e.clientX;
       document.body.style.cursor = 'col-resize';
       window.addEventListener('mousemove', onMouseMove);
