@@ -155,7 +155,7 @@ exports.handler = async (event) => {
         filename: item.originalFilename || originalKey.split('/').pop() || 'document'
       });
     } catch (parseErr) {
-      // Log the raw parsing error for debugging
+      // Enhanced logging for debugging document parsing errors
       console.error('Document parsing error details:', {
         translationId,
         ownerId,
@@ -163,6 +163,26 @@ exports.handler = async (event) => {
         contentType,
         error: parseErr.message,
         stack: parseErr.stack
+      });
+
+      // Also log to DynamoDB for audit purposes with enhanced error details
+      await recordLog({
+        translationId,
+        ownerId,
+        eventType: 'parsing-error',
+        status: 'FAILED',
+        message: `Document parsing failed: ${parseErr.message}`,
+        metadata: {
+          filename: item.originalFilename,
+          contentType,
+          errorType: parseErr.name || 'ParseError',
+          originalError: parseErr.message
+        },
+        context: {
+          parseError: parseErr.message,
+          filename: item.originalFilename || originalKey.split('/').pop() || 'document',
+          stackTrace: parseErr.stack
+        }
       });
 
       // Provide more specific error messages for common issues

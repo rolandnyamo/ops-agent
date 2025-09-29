@@ -49,6 +49,12 @@ async function parseDocx(buffer, _filename) {
     const htmlResult = await mammoth.convertToHtml({ buffer }, {
       convertImage: mammoth.images.inline(async element => {
         try {
+          // Defensive null checks to prevent "Cannot read properties of null" errors
+          if (!element) {
+            console.warn('DOCX parsing: null element encountered in convertImage');
+            return {};
+          }
+
           const imageBuffer = await element.read();
           if (!imageBuffer) {return {};}
           const assetId = computeAssetId(imageBuffer);
@@ -57,8 +63,10 @@ async function parseDocx(buffer, _filename) {
           const ext = guessExtension(mime, 'bin');
           const widthPx = element.size?.width ? convertEmuToPx(element.size.width) : null;
           const heightPx = element.size?.height ? convertEmuToPx(element.size.height) : null;
-          const altText = normaliseAltText(element.altText);
-          const filenameHint = sanitizeFilename(element.altText || `${token}.${ext}`, ext);
+
+          // Add defensive null check for altText
+          const altText = normaliseAltText(element.altText || '');
+          const filenameHint = sanitizeFilename((element.altText || '') || `${token}.${ext}`, ext);
 
           imageRegistry.set(token, {
             token,

@@ -22,7 +22,9 @@ const BLOCK_TAGS = new Set([
 const DEFAULT_HEAD = '<head><meta charset="utf-8"/></head>';
 
 function normalizeHtml(html) {
-  const trimmed = String(html || '').trim();
+  // Defensive null check to prevent "Cannot read properties of null" errors
+  const safeHtml = html === null || html === undefined ? '' : String(html);
+  const trimmed = safeHtml.trim();
   if (!trimmed) {
     return `<html>${DEFAULT_HEAD}<body></body></html>`;
   }
@@ -34,11 +36,13 @@ function normalizeHtml(html) {
 }
 
 function textToHtml(text) {
-  const parts = String(text || '')
+  // Defensive null check to prevent "Cannot read properties of null" errors
+  const safeText = text === null || text === undefined ? '' : String(text);
+  const parts = safeText
     .split(/\n{2,}/)
-    .map(part => part.trim())
+    .map(part => (part || '').trim())
     .filter(Boolean)
-    .map(part => `<p>${part.replace(/\n/g, '<br/>')}</p>`);
+    .map(part => `<p>${(part || '').replace(/\n/g, '<br/>')}</p>`);
   if (!parts.length) {
     return '<p></p>';
   }

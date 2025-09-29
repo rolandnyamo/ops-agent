@@ -63,7 +63,9 @@ function sanitizeFilename(name, ext) {
 }
 
 function assetStorageKey(assetId, filename) {
-  const hash = String(assetId || '').replace(/^sha256:/, '');
+  // Defensive null check to prevent "Cannot read properties of null" errors
+  const safeAssetId = assetId === null || assetId === undefined ? '' : String(assetId);
+  const hash = safeAssetId.replace(/^sha256:/, '');
   const prefix = hash.slice(0, 2) || '00';
   const safeName = sanitizeFilename(filename || hash || 'asset');
   return `assets/${prefix}/${hash}/${safeName}`;
@@ -76,7 +78,9 @@ function createDeterministicId(prefix, parts = []) {
 }
 
 function normaliseTextForHash(text) {
-  return String(text || '').replace(/\s+/g, ' ').trim();
+  // Defensive null check to prevent "Cannot read properties of null" errors
+  const safeText = text === null || text === undefined ? '' : String(text);
+  return safeText.replace(/\s+/g, ' ').trim();
 }
 
 function computeTextWindowHash(before, after) {
