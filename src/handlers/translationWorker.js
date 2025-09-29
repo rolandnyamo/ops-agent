@@ -178,16 +178,29 @@ exports.handler = async (event) => {
         filename: item.originalFilename || originalKey.split('/').pop() || 'document'
       });
     } catch (parseErr) {
-      // Provide more specific error messages for common PDF issues
+      // Log the raw parsing error for debugging
+      console.error('Document parsing error details:', {
+        translationId,
+        ownerId,
+        filename: item.originalFilename,
+        contentType,
+        error: parseErr.message,
+        stack: parseErr.stack
+      });
+
+      // Provide more specific error messages for common issues
       let errorMessage = 'Failed to prepare translation document';
-      if (parseErr.message.includes('bad XRef') || 
+      if (parseErr.message.includes('bad XRef') ||
           parseErr.message.includes('Invalid PDF') ||
           parseErr.message.includes('PDF parsing failed')) {
         errorMessage = 'PDF file appears to be corrupted or invalid. Please try re-uploading the file or ensure the PDF is not password-protected.';
       } else if (parseErr.message.includes('Unsupported content type')) {
         errorMessage = 'File format not supported for translation. Please upload a PDF, Word document (DOC/DOCX), HTML, RTF, ODT, or text file.';
+      } else if (parseErr.message.includes('DOCX parsing error') ||
+                 parseErr.message.includes('Cannot read properties of null')) {
+        errorMessage = 'Word document parsing error. The file may be corrupted or contain unsupported elements. Please try re-uploading or converting to a different format.';
       }
-      
+
       await failTranslation({
         translationId,
         ownerId,
@@ -236,7 +249,7 @@ exports.handler = async (event) => {
         const assetMap = new Map(assetContext.assets.map(asset => [asset.assetId, asset]));
         enrichedAssets = (document.assets || []).map(asset => {
           const stored = assetMap.get(asset.assetId);
-          if (!stored) return asset;
+          if (!stored) {return asset;}
           return { ...asset, s3Bucket: stored.s3Bucket || null, s3Key: stored.s3Key || null };
         });
       }
@@ -354,7 +367,7 @@ exports.handler = async (event) => {
 
       for (const translation of translations) {
         const record = byId.get(translation.id) || pending.find(p => p.chunk.id === translation.id)?.record;
-        if (!record) continue;
+        if (!record) {continue;}
         const updated = await updateChunkState({
           translationId,
           ownerId,
@@ -433,18 +446,18 @@ exports.handler = async (event) => {
     const serializedAssets = assetContext.assets && assetContext.assets.length
       ? assetContext.assets
       : enrichedAssets.map(asset => ({
-          assetId: asset.assetId,
-          mime: asset.mime,
-          bytes: asset.bytes ?? (asset.buffer ? asset.buffer.length : 0),
-          widthPx: asset.widthPx || null,
-          heightPx: asset.heightPx || null,
-          keepOriginalLanguage: Boolean(asset.keepOriginalLanguage),
-          altText: asset.altText || '',
-          caption: asset.caption || null,
-          s3Bucket: asset.s3Bucket || null,
-          s3Key: asset.s3Key || null,
-          originalName: asset.originalName || null
-        }));
+        assetId: asset.assetId,
+        mime: asset.mime,
+        bytes: asset.bytes ?? (asset.buffer ? asset.buffer.length : 0),
+        widthPx: asset.widthPx || null,
+        heightPx: asset.heightPx || null,
+        keepOriginalLanguage: Boolean(asset.keepOriginalLanguage),
+        altText: asset.altText || '',
+        caption: asset.caption || null,
+        s3Bucket: asset.s3Bucket || null,
+        s3Key: asset.s3Key || null,
+        originalName: asset.originalName || null
+      }));
 
     const serializedAnchors = assetContext.anchors && assetContext.anchors.length
       ? assetContext.anchors

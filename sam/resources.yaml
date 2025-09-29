@@ -24,7 +24,7 @@ Parameters:
     Description: S3 Vectors index name
   SesSenderEmail:
     Type: String
-    Default: notifications@example.com
+    Default: roland@rolandn.dev
     Description: Verified SES email identity used for job notifications
 
 Globals:
