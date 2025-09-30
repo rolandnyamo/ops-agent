@@ -154,7 +154,27 @@ async function getChunk(translationId, ownerId, chunkOrder) {
     })
   };
   const res = await ddb.send(new GetItemCommand(params));
-  return res.Item ? unmarshall(res.Item) : null;
+  if (!res.Item) {return null;}
+  const item = unmarshall(res.Item);
+  if (!RAW_BUCKET) {return item;}
+
+  const hasInlineData = ['sourceHtml', 'machineHtml', 'reviewerHtml'].some(field =>
+    Object.prototype.hasOwnProperty.call(item, field)
+  );
+  if (hasInlineData) {return item;}
+
+  if (!item.chunkId) {return item;}
+
+  const data = await getChunkData({
+    translationId,
+    ownerId,
+    chunkId: item.chunkId,
+    dataKey: item.dataKey
+  });
+  return {
+    ...item,
+    ...data
+  };
 }
 
 async function listChunks(translationId, ownerId) {
