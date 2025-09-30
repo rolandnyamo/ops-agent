@@ -1,7 +1,7 @@
 const corsHeaders = () => {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-BOT-API-KEY,X-Bot-Signature,X-Bot-Timestamp',
+    'Access-Control-Allow-Headers': 'authorization,content-type,access-control-allow-origin,x-bot-signature,x-bot-timestamp,x-bot-api-key',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
   };
 };

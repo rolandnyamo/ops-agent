@@ -562,6 +562,66 @@ Resources:
             RestApiId: !Ref Api
             Path: /translations/{translationId}/logs
             Method: OPTIONS
+        TranslationsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations
+            Method: OPTIONS
+        TranslationUploadUrlOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/upload-url
+            Method: OPTIONS
+        TranslationIdOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}
+            Method: OPTIONS
+        TranslationChunksOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/chunks
+            Method: OPTIONS
+        TranslationApproveOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/approve
+            Method: OPTIONS
+        TranslationDownloadOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/download
+            Method: OPTIONS
+        TranslationPauseOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/pause
+            Method: OPTIONS
+        TranslationResumeOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/resume
+            Method: OPTIONS
+        TranslationStopOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/stop
+            Method: OPTIONS
+        TranslationRestartOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/restart
+            Method: OPTIONS
 
   TranslationWorkerQueue:
     Type: AWS::SQS::Queue

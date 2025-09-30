@@ -333,6 +333,7 @@ function createModeHandlers(deps) {
       translationId,
       ownerId,
       chunkOrder,
+      chunkId: chunk.chunkId,
       patch: {
         status: 'PROCESSING',
         startedAt: chunk.startedAt || now(),
@@ -385,6 +386,7 @@ function createModeHandlers(deps) {
         translationId,
         ownerId,
         chunkOrder,
+        chunkId: chunk.chunkId,
         patch: {
           status: 'COMPLETED',
           machineHtml: result.translatedHtml || chunk.sourceHtml,
@@ -432,6 +434,7 @@ function createModeHandlers(deps) {
         translationId,
         ownerId,
         chunkOrder,
+        chunkId: chunk.chunkId,
         patch: {
           status: 'FAILED',
           errorMessage: translateErr.message,

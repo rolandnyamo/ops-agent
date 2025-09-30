@@ -5,7 +5,6 @@ const { SQSClient, SendMessageCommand } = require('@aws-sdk/client-sqs');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const HtmlDocx = require('html-docx-js');
 const crypto = require('node:crypto');
-const { response } = require('./helpers/utils');
 const { assembleHtmlDocument } = require('./helpers/documentParser');
 const { listChunks, updateChunkState, deleteAllChunks, summariseChunks } = require('./helpers/translationStore');
 const { sendJobNotification } = require('./helpers/notifications');
@@ -34,9 +33,18 @@ function parseBody(event) {
 }
 
 function ok(status, body, callback) {
-  response.statusCode = status;
-  response.body = JSON.stringify(body);
-  return callback(null, response);
+  const responseObj = {
+    statusCode: status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'authorization,content-type,access-control-allow-origin,x-bot-signature,x-bot-timestamp,x-bot-api-key',
+      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
+    },
+    isBase64Encoded: false,
+    body: JSON.stringify(body)
+  };
+  return callback(null, responseObj);
 }
 
 function sanitizeFilename(name) {
