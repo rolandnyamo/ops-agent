@@ -29,6 +29,15 @@ function stripWrapperTags(html) {
   return trimmed;
 }
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function extractRootWrapper(html) {
   const match = /^<([a-zA-Z0-9:-]+)([^>]*)>([\s\S]*)<\/\1>$/i.exec(String(html || '').trim());
   if (!match) {
@@ -69,6 +78,85 @@ class TranslationError extends Error {
       this.details = details;
     }
   }
+}
+
+function isPdfLikeHtml(html) {
+  return /class\s*=\s*"pdf-text"/.test(html || '');
+}
+
+function parsePdfSpans(html) {
+  try {
+    const root = parse(html, { lowerCaseTagName: false });
+    const spans = root.querySelectorAll('span.pdf-text');
+    if (!Array.isArray(spans) || !spans.length) {
+      return null;
+    }
+    const records = spans.map((span, index) => ({
+      id: `span_${index + 1}`,
+      text: span.innerText || span.text || '',
+      span
+    }));
+    return { root, spans: records };
+  } catch {
+    return null;
+  }
+}
+
+async function translatePdfHtml({ html, sourceLanguage, targetLanguage, model, attempt = 0 }, openai) {
+  const parsed = parsePdfSpans(html);
+  if (!parsed) {
+    return null;
+  }
+  const entries = parsed.spans;
+  if (!entries.length) {
+    return html;
+  }
+
+  const instructionList = entries
+    .map(entry => `${entry.id}: ${entry.text.replace(/\s+/g, ' ').trim()}`)
+    .join('\n');
+
+  const systemPrompt = `You are a professional translator. Translate each provided PDF text segment from ${sourceLanguage} to ${targetLanguage}. Keep punctuation and spacing, but translate the human-readable text. Return valid JSON ONLY as an array of objects [{"id":"span_1","text":"TRANSLATION"}, ...] matching every id exactly and preserving order.`;
+  const correctivePrompt = attempt > 0
+    ? 'Reminder: output must be JSON only, no prose, matching every id. Do not omit items.'
+    : 'Do not add commentary. Do not merge ids. Simply translate each text value.';
+
+  const resp = await openai.responses.create({
+    model,
+    input: [
+      { role: 'system', content: [{ type: 'input_text', text: systemPrompt }] },
+      { role: 'user', content: [{ type: 'input_text', text: `${correctivePrompt}\n\n${instructionList}` }] }
+    ],
+    max_output_tokens: 4096,
+    temperature: 0.2
+  });
+
+  let out = stripWrapperTags(resp.output_text || '');
+  if (!out) {
+    throw new TranslationError('Empty translation output for PDF snippet');
+  }
+
+  let parsedJson;
+  try {
+    parsedJson = JSON.parse(out);
+  } catch (err) {
+    throw new TranslationError('Failed to parse PDF translation JSON', { raw: out, cause: err });
+  }
+
+  if (!Array.isArray(parsedJson) || parsedJson.length !== entries.length) {
+    throw new TranslationError('PDF translation JSON missing entries', { expected: entries.length, received: parsedJson.length });
+  }
+
+  const byId = new Map(parsedJson.map(item => [item?.id, item?.text]));
+  for (const entry of entries) {
+    if (!byId.has(entry.id)) {
+      throw new TranslationError(`PDF translation JSON missing id ${entry.id}`);
+    }
+    const translated = String(byId.get(entry.id) ?? '').trim();
+    entry.span.set_content(escapeHtml(translated));
+  }
+
+  return parsed.root.toString();
 }
 
 function describeTagPath(html) {
@@ -131,6 +219,19 @@ function validateStructure(sourceHtml, translatedHtml) {
 
 async function translateChunkOpenAI({ html, sourceLanguage, targetLanguage, model, attempt = 0 }) {
   const openai = await getOpenAIClient();
+  if (isPdfLikeHtml(html)) {
+    try {
+      const pdfHtml = await translatePdfHtml({ html, sourceLanguage, targetLanguage, model, attempt }, openai);
+      if (pdfHtml) {
+        return enforceRootWrapper(html, pdfHtml);
+      }
+    } catch (pdfErr) {
+      if (pdfErr instanceof TranslationError) {
+        throw pdfErr;
+      }
+      console.warn('translateChunkOpenAI pdf fallback failed', pdfErr?.message || pdfErr);
+    }
+  }
   const tagHint = describeTagPath(html);
   const maxRetries = 1;
 
