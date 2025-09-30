@@ -3,9 +3,11 @@ import Layout from '../components/Layout';
 import { getUsers, inviteUser, activateUser, deactivateUser, deleteUser, updateUserNotificationPreferences, type User, type NotificationPreferences } from '../lib/api';
 
 const DEFAULT_NOTIFICATION_PREFS: NotificationPreferences = {
-  translation: { started: false, completed: true, failed: true },
+  translation: { started: false, completed: true, failed: true, paused: false, resumed: false, cancelled: false },
   documentation: { started: false, completed: true, failed: true }
 };
+
+const TRANSLATION_PREF_KEYS: Array<keyof NotificationPreferences['translation']> = ['started', 'completed', 'failed', 'paused', 'resumed', 'cancelled'];
 
 export default function Users() {
   const [users, setUsers] = useState<User[]>([]);
@@ -155,10 +157,10 @@ export default function Users() {
   }
 
   function getUserPreferences(user: User): NotificationPreferences {
-    const base = user.notifications?.preferences || DEFAULT_NOTIFICATION_PREFS;
+    const base = user.notifications?.preferences || {};
     return {
-      translation: { ...base.translation },
-      documentation: { ...base.documentation }
+      translation: { ...DEFAULT_NOTIFICATION_PREFS.translation, ...(base.translation || {}) },
+      documentation: { ...DEFAULT_NOTIFICATION_PREFS.documentation, ...(base.documentation || {}) }
     };
   }
 
@@ -269,8 +271,8 @@ export default function Users() {
                       <td style={{ padding: '12px 8px', fontSize: '12px', color: '#444' }}>
                         <div style={{ marginBottom: 6 }}>
                           <strong>Translation</strong>
-                          <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
-                            {(['started', 'completed', 'failed'] as Array<keyof NotificationPreferences['translation']>).map((status) => (
+                          <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
+                            {TRANSLATION_PREF_KEYS.map((status) => (
                               <label key={status} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <input
                                   type="checkbox"

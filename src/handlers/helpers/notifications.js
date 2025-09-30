@@ -15,18 +15,17 @@ function now() {
 
 function normalisePreferences(input = {}) {
   const defaults = {
-    translation: { started: false, completed: true, failed: true },
+    translation: { started: false, completed: true, failed: true, paused: false, resumed: false, cancelled: false },
     documentation: { started: false, completed: true, failed: true }
   };
   const out = {};
   for (const jobType of Object.keys(defaults)) {
     const base = defaults[jobType];
     const provided = input[jobType] || {};
-    out[jobType] = {
-      started: Boolean(provided.started ?? base.started),
-      completed: Boolean(provided.completed ?? base.completed),
-      failed: Boolean(provided.failed ?? base.failed)
-    };
+    out[jobType] = {};
+    for (const [key, value] of Object.entries(base)) {
+      out[jobType][key] = Boolean(provided[key] ?? value);
+    }
   }
   return out;
 }

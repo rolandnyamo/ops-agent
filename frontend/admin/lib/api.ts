@@ -117,7 +117,7 @@ export type TranslationItem = {
   description?: string;
   sourceLanguage: string;
   targetLanguage: string;
-  status: 'PROCESSING' | 'READY_FOR_REVIEW' | 'APPROVED' | 'FAILED';
+  status: 'PROCESSING' | 'READY_FOR_REVIEW' | 'APPROVED' | 'FAILED' | 'PAUSE_REQUESTED' | 'PAUSED' | 'CANCEL_REQUESTED' | 'CANCELLED';
   originalFilename?: string;
   originalFileKey?: string;
   machineFileKey?: string;
@@ -132,6 +132,28 @@ export type TranslationItem = {
   errorMessage?: string;
   restartedAt?: string;
   healthCheckReason?: string | null;
+  pauseRequestedAt?: string | null;
+  pauseRequestedBy?: string | null;
+  pauseRequestedByEmail?: string | null;
+  pauseRequestedBySub?: string | null;
+  pausedAt?: string | null;
+  pausedBy?: string | null;
+  pausedByEmail?: string | null;
+  pausedBySub?: string | null;
+  resumedAt?: string | null;
+  resumedBy?: string | null;
+  resumedByEmail?: string | null;
+  resumedBySub?: string | null;
+  cancelRequestedAt?: string | null;
+  cancelRequestedBy?: string | null;
+  cancelRequestedByEmail?: string | null;
+  cancelRequestedBySub?: string | null;
+  cancelReason?: string | null;
+  cancelledAt?: string | null;
+  cancelledBy?: string | null;
+  cancelledByEmail?: string | null;
+  cancelledBySub?: string | null;
+  cancelCleanupAt?: string | null;
 };
 
 export type TranslationChunk = {
@@ -258,6 +280,40 @@ export async function restartTranslation(translationId: string){
   return res.json() as Promise<{ message: string }>;
 }
 
+export async function pauseTranslation(translationId: string){
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/pause`, {
+    method: 'POST',
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`pause translation ${res.status}`);
+  return res.json() as Promise<{ message: string }>;
+}
+
+export async function resumeTranslation(translationId: string){
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/resume`, {
+    method: 'POST',
+    headers: { ...(await authHeader()) }
+  });
+  if (!res.ok) throw new Error(`resume translation ${res.status}`);
+  return res.json() as Promise<{ message: string }>;
+}
+
+export async function cancelTranslation(translationId: string, reason?: string){
+  const headers = { ...(await authHeader()) } as Record<string, string>;
+  let body: string | undefined;
+  if (reason && reason.trim()) {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify({ reason });
+  }
+  const res = await fetch(`${cfg.apiBase}/translations/${encodeURIComponent(translationId)}/stop`, {
+    method: 'POST',
+    headers,
+    body
+  });
+  if (!res.ok) throw new Error(`cancel translation ${res.status}`);
+  return res.json() as Promise<{ message: string }>;
+}
+
 export async function listTranslationLogs(translationId: string, nextToken?: string, limit = 20){
   const params = new URLSearchParams();
   if (nextToken) params.set('nextToken', nextToken);
@@ -356,7 +412,7 @@ export async function deleteAgent(agentId: string){
 
 // User Management API
 export type NotificationPreferences = {
-  translation: { started: boolean; completed: boolean; failed: boolean };
+  translation: { started: boolean; completed: boolean; failed: boolean; paused: boolean; resumed: boolean; cancelled: boolean };
   documentation: { started: boolean; completed: boolean; failed: boolean };
 };
 

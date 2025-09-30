@@ -66,6 +66,10 @@ export default function TranslationDetailPage() {
     [translation, reviewLocked]
   );
   const isApproved = useMemo(() => translation?.status === 'APPROVED', [translation]);
+  const isPaused = useMemo(() => translation?.status === 'PAUSED', [translation]);
+  const pausePending = useMemo(() => translation?.status === 'PAUSE_REQUESTED', [translation]);
+  const cancelPending = useMemo(() => translation?.status === 'CANCEL_REQUESTED', [translation]);
+  const isCancelled = useMemo(() => translation?.status === 'CANCELLED', [translation]);
   const canExportTranslation = useMemo(
     () => translation?.status === 'READY_FOR_REVIEW' || translation?.status === 'APPROVED',
     [translation]
@@ -554,6 +558,27 @@ export default function TranslationDetailPage() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {pausePending && (
+        <div className="card info-note" style={{ marginBottom: 16 }}>
+          <div className="muted mini">Pause requested. The translation worker will pause shortly.</div>
+        </div>
+      )}
+      {isPaused && (
+        <div className="card info-note" style={{ marginBottom: 16 }}>
+          <div className="muted mini">Translation is paused. Resume from the overview to continue processing.</div>
+        </div>
+      )}
+      {cancelPending && (
+        <div className="card info-note" style={{ marginBottom: 16 }}>
+          <div className="muted mini">Cancellation requested. Remaining work will stop soon.</div>
+        </div>
+      )}
+      {isCancelled && (
+        <div className="card" style={{ marginBottom: 16, borderColor: 'rgba(220,38,38,0.4)', background: 'rgba(220,38,38,0.05)' }}>
+          <div className="muted mini" style={{ color: '#dc2626' }}>Translation was cancelled. No further processing will occur.</div>
         </div>
       )}
 

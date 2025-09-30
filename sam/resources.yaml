@@ -524,6 +524,24 @@ Resources:
             RestApiId: !Ref Api
             Path: /translations/{translationId}
             Method: DELETE
+        PauseTranslation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/pause
+            Method: POST
+        ResumeTranslation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/resume
+            Method: POST
+        CancelTranslation:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /translations/{translationId}/stop
+            Method: POST
         RestartTranslation:
           Type: Api
           Properties:
