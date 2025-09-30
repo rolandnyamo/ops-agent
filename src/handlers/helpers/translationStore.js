@@ -1,4 +1,4 @@
-const { DynamoDBClient, QueryCommand, UpdateItemCommand, BatchWriteItemCommand } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBClient, QueryCommand, UpdateItemCommand, BatchWriteItemCommand, GetItemCommand } = require('@aws-sdk/client-dynamodb');
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 
@@ -37,7 +37,18 @@ function chunkDataKey(translationId, ownerId, chunkId) {
 }
 
 async function putChunkData({ translationId, ownerId, chunkId, dataKey, data }) {
-  if (!RAW_BUCKET || !chunkId) return null;
+  if (!RAW_BUCKET) {
+    throw new Error('RAW_BUCKET environment variable is not configured');
+  }
+  if (!chunkId) {
+    throw new Error('chunkId is required for putChunkData');
+  }
+  if (!translationId) {
+    throw new Error('translationId is required for putChunkData');
+  }
+  if (!ownerId) {
+    throw new Error('ownerId is required for putChunkData');
+  }
   const key = dataKey || chunkDataKey(translationId, ownerId, chunkId);
   const body = JSON.stringify({
     chunkId,
@@ -55,12 +66,23 @@ async function putChunkData({ translationId, ownerId, chunkId, dataKey, data }) 
 }
 
 async function getChunkData({ translationId, ownerId, chunkId, dataKey }) {
-  if (!RAW_BUCKET || !chunkId) return {};
+  if (!RAW_BUCKET) {
+    throw new Error('RAW_BUCKET environment variable is not configured');
+  }
+  if (!chunkId) {
+    throw new Error('chunkId is required for getChunkData');
+  }
+  if (!translationId) {
+    throw new Error('translationId is required for getChunkData');
+  }
+  if (!ownerId) {
+    throw new Error('ownerId is required for getChunkData');
+  }
   const key = dataKey || chunkDataKey(translationId, ownerId, chunkId);
   try {
     const res = await s3.send(new GetObjectCommand({ Bucket: RAW_BUCKET, Key: key }));
     const text = await res.Body.transformToString();
-    if (!text) return {};
+    if (!text) {return {};}
     return JSON.parse(text);
   } catch (err) {
     if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) {
@@ -72,18 +94,29 @@ async function getChunkData({ translationId, ownerId, chunkId, dataKey }) {
 }
 
 async function deleteChunkData({ translationId, ownerId, chunkId, dataKey }) {
-  if (!RAW_BUCKET || !chunkId) return;
+  if (!RAW_BUCKET) {
+    throw new Error('RAW_BUCKET environment variable is not configured');
+  }
+  if (!chunkId) {
+    throw new Error('chunkId is required for deleteChunkData');
+  }
+  if (!translationId) {
+    throw new Error('translationId is required for deleteChunkData');
+  }
+  if (!ownerId) {
+    throw new Error('ownerId is required for deleteChunkData');
+  }
   const key = dataKey || chunkDataKey(translationId, ownerId, chunkId);
   try {
     await s3.send(new DeleteObjectCommand({ Bucket: RAW_BUCKET, Key: key }));
   } catch (err) {
-    if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) return;
+    if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) {return;}
     console.warn('failed to delete chunk data', { translationId, ownerId, chunkId, error: err?.message || err });
   }
 }
 
-async function queryChunkItems(translationId, ownerId) {
-  if (!DOCS_TABLE) return [];
+async function queryChunkItems(translationId, _ownerId) {
+  if (!DOCS_TABLE) {return [];}
   const params = {
     TableName: DOCS_TABLE,
     KeyConditionExpression: '#pk = :pk AND begins_with(#sk, :skPrefix)',
@@ -100,9 +133,33 @@ async function queryChunkItems(translationId, ownerId) {
   return (res.Items || []).map(item => unmarshall(item));
 }
 
+async function getChunk(translationId, ownerId, chunkOrder) {
+  if (!DOCS_TABLE) {
+    throw new Error('DOCS_TABLE environment variable is not configured');
+  }
+  if (!translationId) {
+    throw new Error('translationId is required for getChunk');
+  }
+  if (!ownerId) {
+    throw new Error('ownerId is required for getChunk');
+  }
+  if (typeof chunkOrder === 'undefined' || chunkOrder === null) {
+    throw new Error('chunkOrder is required for getChunk');
+  }
+  const params = {
+    TableName: DOCS_TABLE,
+    Key: marshall({
+      PK: `TRANSLATION#${translationId}`,
+      SK: chunkSortKey(chunkOrder)
+    })
+  };
+  const res = await ddb.send(new GetItemCommand(params));
+  return res.Item ? unmarshall(res.Item) : null;
+}
+
 async function listChunks(translationId, ownerId) {
   const items = await queryChunkItems(translationId, ownerId);
-  if (!items.length) return [];
+  if (!items.length) {return [];}
   const results = await Promise.all(items.map(async item => {
     if (!RAW_BUCKET) {
       return item;
@@ -126,7 +183,7 @@ async function listChunks(translationId, ownerId) {
 }
 
 async function ensureChunkSource({ translationId, ownerId = 'default', chunk }) {
-  if (!DOCS_TABLE || !chunk) return;
+  if (!DOCS_TABLE || !chunk) {return;}
   const chunkId = chunk.id || chunk.chunkId;
   if (!chunkId) {
     throw new Error('Chunk is missing chunkId');
@@ -187,8 +244,8 @@ async function ensureChunkSource({ translationId, ownerId = 'default', chunk }) 
     ReturnValues: 'ALL_NEW'
   }));
   const attributes = res.Attributes ? unmarshall(res.Attributes) : undefined;
-  if (!attributes) return undefined;
-  if (!RAW_BUCKET) return attributes;
+  if (!attributes) {return undefined;}
+  if (!RAW_BUCKET) {return attributes;}
   return {
     ...attributes,
     ...nextData,
@@ -197,9 +254,20 @@ async function ensureChunkSource({ translationId, ownerId = 'default', chunk }) 
 }
 
 async function updateChunkState({ translationId, ownerId = 'default', chunkOrder, chunkId, patch }) {
-  if (!DOCS_TABLE || !patch || typeof chunkOrder === 'undefined') return;
+  if (!DOCS_TABLE) {
+    throw new Error('DOCS_TABLE environment variable is not configured');
+  }
+  if (!patch || typeof patch !== 'object') {
+    throw new Error('patch object is required for updateChunkState');
+  }
+  if (typeof chunkOrder === 'undefined' || chunkOrder === null) {
+    throw new Error('chunkOrder is required for updateChunkState');
+  }
   if (!chunkId) {
-    throw new Error('updateChunkState requires chunkId');
+    throw new Error('chunkId is required for updateChunkState');
+  }
+  if (!translationId) {
+    throw new Error('translationId is required for updateChunkState');
   }
   const key = chunkPrimaryKey(translationId, ownerId, chunkOrder);
   const names = { '#updatedAt': 'updatedAt', '#dataKey': 'dataKey', '#machineHtml': 'machineHtml', '#reviewerHtml': 'reviewerHtml', '#sourceHtml': 'sourceHtml', '#sourceText': 'sourceText' };
@@ -251,8 +319,8 @@ async function updateChunkState({ translationId, ownerId = 'default', chunkOrder
     ReturnValues: 'ALL_NEW'
   }));
   const attributes = res.Attributes ? unmarshall(res.Attributes) : undefined;
-  if (!attributes) return undefined;
-  if (!RAW_BUCKET) return attributes;
+  if (!attributes) {return undefined;}
+  if (!RAW_BUCKET) {return attributes;}
   if (!mergedData) {
     mergedData = await getChunkData({ translationId, ownerId, chunkId, dataKey: attributes.dataKey });
   }
@@ -263,9 +331,9 @@ async function updateChunkState({ translationId, ownerId = 'default', chunkOrder
 }
 
 async function deleteAllChunks(translationId, ownerId = 'default') {
-  if (!DOCS_TABLE) return;
+  if (!DOCS_TABLE) {return;}
   const chunks = await queryChunkItems(translationId, ownerId);
-  if (!chunks.length) return;
+  if (!chunks.length) {return;}
   if (RAW_BUCKET) {
     await Promise.all(chunks.map(chunk => deleteChunkData({
       translationId,
@@ -295,7 +363,7 @@ function summariseChunks(chunks = []) {
   const failed = chunks.filter(chunk => chunk.status === 'FAILED').length;
   const latestUpdate = chunks.reduce((acc, chunk) => {
     const ts = chunk.updatedAt || chunk.lastUpdatedAt || chunk.completedAt;
-    if (!ts) return acc;
+    if (!ts) {return acc;}
     return !acc || new Date(ts) > new Date(acc) ? ts : acc;
   }, null);
   return { total, completed, failed, latestUpdate };

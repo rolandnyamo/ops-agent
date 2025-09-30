@@ -184,7 +184,7 @@ function createModeHandlers(deps) {
         const assetMap = new Map(assetContext.assets.map(asset => [asset.assetId, asset]));
         enrichedAssets = (document.assets || []).map(asset => {
           const stored = assetMap.get(asset.assetId);
-          if (!stored) return asset;
+          if (!stored) {return asset;}
           return { ...asset, s3Bucket: stored.s3Bucket || null, s3Key: stored.s3Key || null };
         });
       }

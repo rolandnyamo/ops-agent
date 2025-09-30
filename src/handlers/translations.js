@@ -25,7 +25,7 @@ function now() {
 }
 
 function parseBody(event) {
-  if (!event || !event.body) return {};
+  if (!event || !event.body) {return {};}
   try {
     return typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
   } catch {
@@ -52,12 +52,12 @@ function reviewerFrom(event) {
   return {
     name: claims['name'] || claims['cognito:username'] || null,
     email: claims['email'] || null,
-    sub: claims['sub'] || null,
+    sub: claims['sub'] || null
   };
 }
 
 function actorFrom(reviewer, role = 'user') {
-  if (!reviewer) return { type: 'system', role };
+  if (!reviewer) {return { type: 'system', role };}
   const { email = null, name = null, sub = null } = reviewer;
   if (!email && !name && !sub) {
     return { type: 'system', role };
@@ -72,7 +72,7 @@ function actorFrom(reviewer, role = 'user') {
 }
 
 function actorLabel(actor) {
-  if (!actor) return null;
+  if (!actor) {return null;}
   return actor.email || actor.name || actor.sub || actor.role || actor.type || null;
 }
 
@@ -260,7 +260,7 @@ async function getTranslation(translationId, ownerId) {
     TableName: DOCS_TABLE,
     Key: marshall({ PK: `TRANSLATION#${translationId}`, SK: `TRANSLATION#${ownerId}` })
   }));
-  if (!res.Item) return null;
+  if (!res.Item) {return null;}
   return unmarshall(res.Item);
 }
 
@@ -318,7 +318,7 @@ function normaliseChunkRecord(record) {
 
 async function fetchChunkState(item, ownerId) {
   const records = await listChunks(item.translationId, ownerId);
-  if (!records.length) return null;
+  if (!records.length) {return null;}
   const sorted = records.sort((a, b) => (a.order || 0) - (b.order || 0));
   return sorted.map(normaliseChunkRecord);
 }
@@ -337,7 +337,7 @@ function buildChunkPayload(item, chunks) {
 }
 
 async function persistChunkPayload(item, ownerId, chunks) {
-  if (!RAW_BUCKET) return;
+  if (!RAW_BUCKET) {return;}
   const payload = buildChunkPayload(item, chunks);
   const key = item.chunkFileKey || `translations/chunks/${ownerId}/${item.translationId}.json`;
   await s3.send(new PutObjectCommand({ Bucket: RAW_BUCKET, Key: key, Body: JSON.stringify(payload), ContentType: 'application/json' }));
@@ -378,7 +378,7 @@ async function handleChunkUpdate(event, translationId, ownerId, reviewer) {
   const updatedAt = now();
   for (const incoming of body.chunks) {
     const record = chunkMap.get(incoming.id);
-    if (!record) continue;
+    if (!record) {continue;}
     let nextHtml = record.machineHtml;
     if (Object.prototype.hasOwnProperty.call(incoming, 'reviewerHtml')) {
       nextHtml = typeof incoming.reviewerHtml === 'string' ? incoming.reviewerHtml : record.machineHtml;
@@ -523,7 +523,7 @@ async function handleApprove(translationId, ownerId, reviewer) {
 
 async function handleDownload(translationId, ownerId, type, requester) {
   const item = await getTranslation(translationId, ownerId);
-  if (!item) throw new Error('Translation not found');
+  if (!item) {throw new Error('Translation not found');}
   const mapping = {
     original: item.originalFileKey,
     machine: item.machineFileKey,
@@ -554,7 +554,7 @@ async function handleDownload(translationId, ownerId, type, requester) {
 }
 
 async function deleteS3Object(key) {
-  if (!key) return;
+  if (!key) {return;}
   try {
     await s3.send(new DeleteObjectCommand({ Bucket: RAW_BUCKET, Key: key }));
     console.log('deleted S3 object', { key });
@@ -579,7 +579,6 @@ async function handleDelete(translationId, ownerId, reviewer) {
   ].filter(Boolean);
 
   // Also delete any files in the translation's directory
-  const translationPrefix = `translations/raw/${ownerId}/${translationId}/`;
   const machinePrefix = `translations/machine/${ownerId}/${translationId}`;
   const chunksPrefix = `translations/chunks/${ownerId}/${translationId}`;
   const outputPrefix = `translations/output/${ownerId}/${translationId}`;
@@ -635,11 +634,11 @@ exports.handler = async (event, context, callback) => {
 
   try {
     console.log('translations handler request', { method, path, ownerId, query: event?.queryStringParameters, bodyLength: event?.body ? String(event.body).length : 0 });
-    console.log('full event path info', { 
-      path, 
+    console.log('full event path info', {
+      path,
       pathParameters: event?.pathParameters,
       rawPath: event?.rawPath,
-      resource: event?.resource 
+      resource: event?.resource
     });
     if (method === 'OPTIONS') {
       return ok(200, { ok: true }, callback);
@@ -668,19 +667,19 @@ exports.handler = async (event, context, callback) => {
     // Try to extract translationId from path parameters first, then fall back to regex
     let translationId = event?.pathParameters?.translationId;
     if (!translationId) {
-      const match = path.match(/\/translations\/([^\/]+)/);
+      const match = path.match(/\/translations\/([^/]+)/);
       if (!match) {
         return ok(404, { message: 'Not found' }, callback);
       }
       translationId = match[1];
     }
-    
+
     // Skip if we got the literal path parameter placeholder
     if (translationId === '{translationId}') {
       console.log('Got literal path parameter placeholder, skipping');
       return ok(404, { message: 'Translation ID not provided' }, callback);
     }
-    
+
     console.log('extracted translationId', { translationId });
 
     if (method === 'POST' && path.endsWith('/pause')) {
@@ -912,8 +911,8 @@ exports.handler = async (event, context, callback) => {
     if (method === 'PUT') {
       const body = parseBody(event);
       const patch = {};
-      if (body.title) patch.title = body.title;
-      if (body.description) patch.description = body.description;
+      if (body.title) {patch.title = body.title;}
+      if (body.description) {patch.description = body.description;}
       await updateTranslation(translationId, ownerId, patch);
       const updated = await getTranslation(translationId, ownerId);
       return ok(200, updated, callback);

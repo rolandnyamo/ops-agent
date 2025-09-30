@@ -1,4 +1,4 @@
-const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { DynamoDBClient, GetItemCommand, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
 const { SQSClient, SendMessageCommand, SendMessageBatchCommand } = require('@aws-sdk/client-sqs');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
@@ -61,7 +61,7 @@ async function sendQueueBatch(messages) {
 }
 
 async function failTranslation({ translationId, ownerId, errorMessage, context, fileName, attempt }) {
-  if (!translationId) return;
+  if (!translationId) {return;}
   console.error('translationWorker failure', { translationId, ownerId, errorMessage, context });
   try {
     await updateTranslationItem(translationId, ownerId, {
@@ -195,58 +195,15 @@ exports.handler = async (event) => {
     for (const record of records) {
       let payload;
       try {
-        const pendingChunks = pending.map(p => p.chunk);
-        await Promise.all(pending.map(({ record }) => updateChunkState({
-          translationId,
-          ownerId,
-          chunkOrder: record.order,
-          chunkId: record.chunkId,
-          patch: { status: 'PROCESSING', startedAt: now() }
-        })));
-        translations = await engine.translate(pendingChunks, {
-          sourceLanguage: item.sourceLanguage || 'auto',
-          targetLanguage: item.targetLanguage || 'en'
-        });
-      } catch (translateErr) {
-        await Promise.all(pending.map(({ record }) => updateChunkState({
-          translationId,
-          ownerId,
-          chunkOrder: record.order,
-          chunkId: record.chunkId,
-          patch: { status: 'FAILED', errorMessage: translateErr.message }
-        })));
-        await failTranslation({ translationId, ownerId, errorMessage: 'Translation provider error', context: { error: translateErr.message }, fileName: item.originalFilename, attempt });
-        return;
+        payload = JSON.parse(record.body);
+      } catch (err) {
+        console.warn('translationWorker failed to parse SQS message', { messageId: record.messageId, error: err.message });
+        continue;
       }
-
-      for (const translation of translations) {
-        const controlState = await enforceControlSignals({ translationId, ownerId, chunkRecords: Array.from(byId.values()) });
-        if (controlState.action !== 'continue') {
-          console.log('translationWorker exiting due to control signal during chunk updates', { translationId, action: controlState.action });
-          return;
-        }
-        item = controlState.item;
-        const record = byId.get(translation.id) || pending.find(p => p.chunk.id === translation.id)?.record;
-        if (!record) {continue;}
-        const updated = await updateChunkState({
-          translationId,
-          ownerId,
-          chunkOrder: record.order,
-          chunkId: record.chunkId,
-          patch: {
-            status: 'COMPLETED',
-            machineHtml: translation.translatedHtml || record.sourceHtml,
-            provider: translation.provider || engine.name,
-            model: translation.model || engine.model,
-            lastUpdatedBy: 'machine',
-            lastUpdatedAt: now(),
-            completedAt: now(),
-            errorMessage: null
-          }
-        });
-        if (updated?.chunkId) {
-          byId.set(updated.chunkId, updated);
-        }
+      try {
+        await handlePayload(payload, { messageId: record.messageId });
+      } catch (err) {
+        console.error('translationWorker handler error', { messageId: record.messageId, error: err.message });
       }
     }
     return;
