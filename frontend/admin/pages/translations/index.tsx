@@ -8,6 +8,9 @@ import {
   getTranslationDownloadUrl,
   deleteTranslation,
   restartTranslation,
+  pauseTranslation,
+  resumeTranslation,
+  cancelTranslation,
   listTranslationLogs,
   inferDoc,
   type TranslationItem,
@@ -133,6 +136,10 @@ function statusLabel(status: string) {
     case 'READY_FOR_REVIEW': return 'Ready for review';
     case 'APPROVED': return 'Approved';
     case 'FAILED': return 'Failed';
+    case 'PAUSE_REQUESTED': return 'Pausing…';
+    case 'PAUSED': return 'Paused';
+    case 'CANCEL_REQUESTED': return 'Stopping…';
+    case 'CANCELLED': return 'Cancelled';
     case 'PROCESSING':
     default:
       return 'Processing';
@@ -144,6 +151,10 @@ function statusClass(status: string) {
     case 'READY_FOR_REVIEW': return 'ready';
     case 'APPROVED': return 'ready';
     case 'FAILED': return 'error';
+    case 'PAUSE_REQUESTED': return 'processing';
+    case 'PAUSED': return 'processing';
+    case 'CANCEL_REQUESTED': return 'error';
+    case 'CANCELLED': return 'error';
     default: return 'processing';
   }
 }
@@ -161,6 +172,9 @@ export default function TranslationsPage() {
   const [deleting, setDeleting] = useState(false);
   const [restartConfirm, setRestartConfirm] = useState<{ translationId: string; title: string } | null>(null);
   const [restartingId, setRestartingId] = useState<string | null>(null);
+  const [pausingId, setPausingId] = useState<string | null>(null);
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [logsModal, setLogsModal] = useState<LogsModalState>(LOGS_MODAL_DEFAULT);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -369,6 +383,48 @@ export default function TranslationsPage() {
     setRestartConfirm(null);
   }, []);
 
+  const handlePause = useCallback(async (item: TranslationItem) => {
+    setPausingId(item.translationId);
+    try {
+      setError(null);
+      await pauseTranslation(item.translationId);
+      setNotice('Pause request queued. Processing will halt shortly.');
+      await refresh(true);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to pause translation');
+    } finally {
+      setPausingId(null);
+    }
+  }, [refresh]);
+
+  const handleResume = useCallback(async (item: TranslationItem) => {
+    setResumingId(item.translationId);
+    try {
+      setError(null);
+      await resumeTranslation(item.translationId);
+      setNotice('Resume request queued. Processing will continue.');
+      await refresh(true);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to resume translation');
+    } finally {
+      setResumingId(null);
+    }
+  }, [refresh]);
+
+  const handleCancel = useCallback(async (item: TranslationItem) => {
+    setCancellingId(item.translationId);
+    try {
+      setError(null);
+      await cancelTranslation(item.translationId);
+      setNotice('Cancellation requested. Remaining work will stop shortly.');
+      await refresh(true);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to cancel translation');
+    } finally {
+      setCancellingId(null);
+    }
+  }, [refresh]);
+
   async function confirmRestart() {
     if (!restartConfirm) return;
     setRestartingId(restartConfirm.translationId);
@@ -536,8 +592,16 @@ export default function TranslationsPage() {
             </thead>
             <tbody>
               {items.map(item => {
-                const canRestart = item.status === 'FAILED' || item.status === 'PROCESSING';
+                const canRestart = item.status === 'FAILED' || item.status === 'PROCESSING' || item.status === 'CANCELLED';
                 const restarting = restartingId === item.translationId;
+                const pausing = pausingId === item.translationId;
+                const resuming = resumingId === item.translationId;
+                const cancelling = cancellingId === item.translationId;
+                const pausePending = item.status === 'PAUSE_REQUESTED';
+                const cancelPending = item.status === 'CANCEL_REQUESTED';
+                const showPause = item.status === 'PROCESSING';
+                const showResume = item.status === 'PAUSED' || pausePending;
+                const showCancel = ['PROCESSING', 'PAUSE_REQUESTED', 'PAUSED', 'CANCEL_REQUESTED'].includes(item.status);
                 return (
                   <tr key={item.translationId}>
                     <td style={{ paddingLeft: 24 }}>
@@ -654,10 +718,80 @@ export default function TranslationsPage() {
                       >
                         <TranslationLogsIcon style={{ width: 16, height: 16 }} />
                       </button>
+                      {showPause && (
+                        <button
+                          className="btn ghost mini"
+                          onClick={() => handlePause(item)}
+                          disabled={pausing || cancelling || cancelPending}
+                          title={pausing || pausePending ? 'Pausing…' : 'Pause translation'}
+                          aria-label="Pause translation"
+                          style={{
+                            padding: '6px 8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                        >
+                          {pausing || pausePending ? (
+                            <span style={{ fontSize: 11 }}>…</span>
+                          ) : (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ width: 16, height: 16 }}>
+                              <line x1="9" y1="5" x2="9" y2="19" />
+                              <line x1="15" y1="5" x2="15" y2="19" />
+                            </svg>
+                          )}
+                        </button>
+                      )}
+                      {showResume && (
+                        <button
+                          className="btn ghost mini"
+                          onClick={() => handleResume(item)}
+                          disabled={resuming || cancelling || cancelPending}
+                          title={resuming ? 'Resuming…' : 'Resume translation'}
+                          aria-label="Resume translation"
+                          style={{
+                            padding: '6px 8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                        >
+                          {resuming ? (
+                            <span style={{ fontSize: 11 }}>…</span>
+                          ) : (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ width: 16, height: 16 }}>
+                              <polygon points="8,5 19,12 8,19" fill="currentColor" />
+                            </svg>
+                          )}
+                        </button>
+                      )}
+                      {showCancel && (
+                        <button
+                          className="btn ghost mini"
+                          onClick={() => handleCancel(item)}
+                          disabled={cancelling || cancelPending}
+                          title={cancelPending ? 'Cancellation requested' : 'Stop translation'}
+                          aria-label="Stop translation"
+                          style={{
+                            padding: '6px 8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                        >
+                          {cancelling || cancelPending ? (
+                            <span style={{ fontSize: 11 }}>…</span>
+                          ) : (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ width: 16, height: 16 }}>
+                              <rect x="7" y="7" width="10" height="10" />
+                            </svg>
+                          )}
+                        </button>
+                      )}
                       <button
                         className="btn mini"
                         onClick={() => handleRestartClick(item)}
-                        disabled={!canRestart || restarting}
+                        disabled={!canRestart || restarting || cancelling || cancelPending || pausing || pausePending}
                         style={{
                           padding: '6px 12px',
                           display: 'flex',
