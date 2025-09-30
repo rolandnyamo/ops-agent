@@ -49,6 +49,42 @@ function textToHtml(text) {
   return parts.join('\n');
 }
 
+function prepareParseResult(rawResult, formatInfo, filename) {
+  if (!rawResult || typeof rawResult !== 'object') {
+    return rawResult;
+  }
+  const result = { ...rawResult };
+  const metadata = { ...(rawResult.metadata || {}) };
+  const warningList = [];
+  if (Array.isArray(metadata.warnings)) {
+    warningList.push(...metadata.warnings.filter(Boolean));
+  }
+  if (metadata.warning) {
+    warningList.push(metadata.warning);
+    delete metadata.warning;
+  }
+  metadata.warnings = Array.from(new Set(warningList));
+  if (formatInfo && formatInfo.format && !metadata.format) {
+    metadata.format = formatInfo.format;
+  }
+  if (filename && !metadata.originalFilename) {
+    metadata.originalFilename = filename;
+  }
+  if (typeof result.text === 'string') {
+    metadata.textLength = result.text.length;
+  } else if (typeof metadata.textLength !== 'number') {
+    metadata.textLength = 0;
+  }
+  result.metadata = metadata;
+  if (!Array.isArray(result.assets)) {
+    result.assets = Array.isArray(rawResult.assets) ? rawResult.assets : [];
+  }
+  if (typeof result.text !== 'string') {
+    result.text = typeof rawResult.text === 'string' ? rawResult.text : '';
+  }
+  return result;
+}
+
 /**
  * Detects document format and routes to appropriate handler
  */
@@ -133,6 +169,7 @@ async function parseDocument({ buffer, contentType, filename }) {
         throw new Error(`No handler found for format: ${formatInfo.format}`);
     }
 
+    result = prepareParseResult(result, formatInfo, filename);
     return result;
   } catch (error) {
     console.error(`Document parsing error for ${filename} (${formatInfo.format}):`, error.message);
@@ -144,18 +181,36 @@ async function convertBufferToHtml({ buffer, contentType, filename }) {
   try {
     const result = await parseDocument({ buffer, contentType, filename });
     let html;
-    if (result.html) {
+    let generatedFromText = false;
+
+    if (result.html && String(result.html).trim()) {
       html = normalizeHtml(result.html);
     } else if (result.text) {
       const htmlBody = textToHtml(result.text);
       html = normalizeHtml(`<body>${htmlBody}</body>`);
+      generatedFromText = true;
     } else {
       throw new Error('No text or HTML content extracted from document');
     }
+
+    const metadata = { ...(result.metadata || {}) };
+    const warnings = new Set(Array.isArray(metadata.warnings) ? metadata.warnings.filter(Boolean) : []);
+    if (metadata.warning) {
+      warnings.add(metadata.warning);
+      delete metadata.warning;
+    }
+    if (generatedFromText) {
+      warnings.add('Generated HTML from plain text fallback due to missing structured content.');
+    }
+    metadata.warnings = Array.from(warnings);
+    if (filename && !metadata.originalFilename) {
+      metadata.originalFilename = filename;
+    }
+
     return {
       html,
       assets: Array.isArray(result.assets) ? result.assets : [],
-      metadata: result.metadata || {},
+      metadata,
       text: result.text || ''
     };
   } catch (error) {

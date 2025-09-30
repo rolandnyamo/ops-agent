@@ -13,6 +13,42 @@ function normaliseAltText(text) {
   return String(text || '').trim();
 }
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function textToBasicHtml(content) {
+  const safe = String(content || '');
+  const blocks = safe
+    .split(/\n{2,}/)
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(block => `<p>${escapeHtml(block).replace(/\n/g, '<br/>')}</p>`);
+  if (blocks.length) {
+    return blocks.join('');
+  }
+  return `<p>${escapeHtml(safe).replace(/\n/g, '<br/>')}</p>`;
+}
+
+function collectMammothWarnings(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .map(msg => {
+      if (!msg) return null;
+      if (typeof msg === 'string') return msg;
+      if (msg.message) return msg.message;
+      if (msg.value) return msg.value;
+      if (msg.type) return `${msg.type}: ${JSON.stringify(msg)}`;
+      return null;
+    })
+    .filter(Boolean);
+}
+
 // Safely create promisified version of textract
 const textractFromBufferWithType = textract && textract.fromBufferWithType
   ? promisify(textract.fromBufferWithType.bind(textract))
@@ -23,18 +59,19 @@ const textractFromBufferWithType = textract && textract.fromBufferWithType
  */
 function parseWordDocument(buffer, contentType, filename = 'document') {
   const safeContentType = contentType || '';
-  const isDocx = filename.toLowerCase().endsWith('.docx') ||
-                 safeContentType.includes('officedocument.wordprocessingml.document');
-  const isDoc = filename.toLowerCase().endsWith('.doc') ||
-                safeContentType.includes('application/msword');
+  const safeName = String(filename || '').toLowerCase();
+  const isDocx = safeName.endsWith('.docx') ||
+    safeContentType.includes('officedocument.wordprocessingml.document');
+  const isDoc = safeName.endsWith('.doc') ||
+    safeContentType.includes('application/msword');
 
   if (isDocx) {
     return parseDocx(buffer, filename);
-  } else if (isDoc) {
-    return parseDoc(buffer, filename);
-  } else {
-    throw new Error(`Unsupported Word document format: ${safeContentType || 'unknown'}`);
   }
+  if (isDoc) {
+    return parseDoc(buffer, filename);
+  }
+  throw new Error(`Unsupported Word document format: ${safeContentType || 'unknown'}`);
 }
 
 /**
@@ -49,22 +86,20 @@ async function parseDocx(buffer, _filename) {
     const htmlResult = await mammoth.convertToHtml({ buffer }, {
       convertImage: mammoth.images.inline(async element => {
         try {
-          // Defensive null checks to prevent "Cannot read properties of null" errors
           if (!element) {
             console.warn('DOCX parsing: null element encountered in convertImage');
             return {};
           }
 
           const imageBuffer = await element.read();
-          if (!imageBuffer) {return {};}
+          if (!imageBuffer) return {};
+
           const assetId = computeAssetId(imageBuffer);
           const token = createDeterministicId('docx-image', [assetId, imageIndex++]);
           const mime = element.contentType || 'application/octet-stream';
           const ext = guessExtension(mime, 'bin');
           const widthPx = element.size?.width ? convertEmuToPx(element.size.width) : null;
           const heightPx = element.size?.height ? convertEmuToPx(element.size.height) : null;
-
-          // Add defensive null check for altText
           const altText = normaliseAltText(element.altText || '');
           const filenameHint = sanitizeFilename((element.altText || '') || `${token}.${ext}`, ext);
 
@@ -88,6 +123,7 @@ async function parseDocx(buffer, _filename) {
             'data-asset-align': element.alignment || null,
             alt: altText
           };
+
           if (widthPx) {
             attributes.width = String(widthPx);
           }
@@ -110,6 +146,10 @@ async function parseDocx(buffer, _filename) {
 
     // For ingestion: extract plain text
     const textResult = await mammoth.extractRawText({ buffer });
+    const warnings = [
+      ...collectMammothWarnings(htmlResult.messages),
+      ...collectMammothWarnings(textResult.messages)
+    ];
 
     return {
       text: textResult.value || '',
@@ -118,7 +158,8 @@ async function parseDocx(buffer, _filename) {
       metadata: {
         format: 'docx',
         messages: [...(htmlResult.messages || []), ...(textResult.messages || [])],
-        hasStructure: true
+        hasStructure: true,
+        warnings
       }
     };
   } catch (error) {
@@ -136,18 +177,18 @@ async function parseDoc(buffer, _filename) {
 
   try {
     const text = await textractFromBufferWithType('application/msword', buffer);
+    const htmlBody = textToBasicHtml(text || '');
 
     return {
       text: text || '',
-      html: null, // Legacy DOC doesn't preserve structure as well
+      html: `<div class="word-document word-document--legacy">${htmlBody}</div>`,
       metadata: {
         format: 'doc',
         hasStructure: false,
-        warning: 'Legacy DOC format - limited structure preservation'
+        warnings: ['Legacy DOC format - structure preservation is limited']
       }
     };
   } catch (error) {
-    // Fallback error message for legacy DOC issues
     if (error.message.includes('textract')) {
       throw new Error(`Legacy DOC parsing error: ${error.message}. Please convert to DOCX format for better results.`);
     }
