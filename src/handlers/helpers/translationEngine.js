@@ -3,6 +3,21 @@ const { getOpenAIClient } = require('./openai-client');
 
 function stripWrapperTags(html) {
   let trimmed = String(html || '').trim();
+  const fenceStart = /^(?:```|~~~)[^\n]*\n/;
+  if (fenceStart.test(trimmed)) {
+    trimmed = trimmed.replace(fenceStart, '');
+    const fenceEnd = /(?:```|~~~)\s*$/;
+    if (fenceEnd.test(trimmed)) {
+      trimmed = trimmed.replace(fenceEnd, '');
+    }
+    trimmed = trimmed.trim();
+    if (console && typeof console.debug === 'function') {
+      console.debug('translationEngine: stripped markdown fence from model output');
+    }
+    if (!trimmed.length) {
+      return '';
+    }
+  }
   const snippetMatch = trimmed.match(/^<snippet[^>]*>([\s\S]*)<\/snippet>$/i);
   if (snippetMatch) {
     trimmed = snippetMatch[1].trim();

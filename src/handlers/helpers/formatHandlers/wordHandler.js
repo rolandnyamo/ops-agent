@@ -82,7 +82,6 @@ async function parseDocx(buffer, _filename) {
     const imageRegistry = new Map();
     let imageIndex = 0;
 
-    // For translation: preserve HTML structure
     const htmlResult = await mammoth.convertToHtml({ buffer }, {
       convertImage: mammoth.images.inline(async element => {
         try {
@@ -120,10 +119,12 @@ async function parseDocx(buffer, _filename) {
             src: `cid:${assetId}`,
             'data-asset-token': token,
             'data-asset-id': assetId,
-            'data-asset-align': element.alignment || null,
             alt: altText
           };
 
+          if (element.alignment) {
+            attributes['data-asset-align'] = element.alignment;
+          }
           if (widthPx) {
             attributes.width = String(widthPx);
           }
@@ -144,7 +145,6 @@ async function parseDocx(buffer, _filename) {
       ]
     });
 
-    // For ingestion: extract plain text
     const textResult = await mammoth.extractRawText({ buffer });
     const warnings = [
       ...collectMammothWarnings(htmlResult.messages),
@@ -163,7 +163,12 @@ async function parseDocx(buffer, _filename) {
       }
     };
   } catch (error) {
-    throw new Error(`DOCX parsing error: ${error.message}`);
+    console.warn('DOCX parsing via mammoth failed, attempting fallback', error?.message || error);
+    const fallback = await parseDocxFallback(buffer, error);
+    if (fallback) {
+      return fallback;
+    }
+    throw new Error(`DOCX parsing error: ${error?.message || 'Unknown error'}`);
   }
 }
 
@@ -193,6 +198,34 @@ async function parseDoc(buffer, _filename) {
       throw new Error(`Legacy DOC parsing error: ${error.message}. Please convert to DOCX format for better results.`);
     }
     throw new Error(`DOC parsing error: ${error.message}`);
+  }
+}
+
+async function parseDocxFallback(buffer, originalError) {
+  if (!textractFromBufferWithType) {
+    return null;
+  }
+  try {
+    const text = await textractFromBufferWithType('application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer);
+    const htmlBody = textToBasicHtml(text || '');
+    const warnings = [
+      'Generated HTML from plain text fallback after structured DOCX conversion failed.',
+      originalError?.message ? `mammoth: ${originalError.message}` : null
+    ].filter(Boolean);
+
+    return {
+      text: text || '',
+      html: `<div class="word-document word-document--fallback">${htmlBody}</div>`,
+      assets: [],
+      metadata: {
+        format: 'docx',
+        hasStructure: false,
+        warnings
+      }
+    };
+  } catch (fallbackError) {
+    console.error('DOCX fallback parsing failed', fallbackError?.message || fallbackError);
+    throw new Error(`DOCX parsing error: ${originalError?.message || fallbackError?.message || 'Unknown error'}`);
   }
 }
 

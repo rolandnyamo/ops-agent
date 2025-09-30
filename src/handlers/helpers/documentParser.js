@@ -19,6 +19,15 @@ const BLOCK_TAGS = new Set([
   'p','h1','h2','h3','h4','h5','h6','blockquote','pre','code','ul','ol','li','table','thead','tbody','tr','td','th','section','article','aside','header','footer','figure','figcaption','div'
 ]);
 
+const MAX_CHUNK_HTML_LENGTH = Math.max(
+  1000,
+  Number(process.env.TRANSLATION_MAX_CHUNK_HTML_LENGTH || 12000)
+);
+const MAX_CHUNK_TEXT_LENGTH = Math.max(
+  500,
+  Number(process.env.TRANSLATION_MAX_CHUNK_TEXT_LENGTH || 4500)
+);
+
 const DEFAULT_HEAD = '<head><meta charset="utf-8"/></head>';
 
 function normalizeHtml(html) {
@@ -402,6 +411,99 @@ function collectAssetsAndAnchors(root, candidateAssets = []) {
   };
 }
 
+function wrapNodeHtml(node, childFragments) {
+  const tagName = String(node?.tagName || '').toLowerCase();
+  if (!tagName) {
+    return childFragments.join('');
+  }
+  const attrs = node?.rawAttrs ? ` ${node.rawAttrs}` : '';
+  return `<${tagName}${attrs}>${childFragments.join('')}</${tagName}>`;
+}
+
+function splitPdfPageNode(node) {
+  if (!node) {return [];}
+  const children = Array.from(node.childNodes || []).filter(child => child && child.nodeType !== 8);
+  if (!children.length) {
+    return [];
+  }
+
+  const fragments = [];
+  const startTag = `<${String(node.tagName || '').toLowerCase()}${node.rawAttrs ? ` ${node.rawAttrs}` : ''}>`;
+  const endTag = `</${String(node.tagName || '').toLowerCase()}>`;
+
+  let currentChildren = [];
+  let currentTextParts = [];
+  let htmlLength = startTag.length + endTag.length;
+  let textLength = 0;
+
+  const flush = () => {
+    if (!currentChildren.length) {return;}
+    const html = `${startTag}${currentChildren.join('')}${endTag}`;
+    const text = normaliseTextForHash(currentTextParts.join(' '));
+    fragments.push({ html, text });
+    currentChildren = [];
+    currentTextParts = [];
+    htmlLength = startTag.length + endTag.length;
+    textLength = 0;
+  };
+
+  for (const child of children) {
+    const childHtml = child.toString();
+    const childText = normaliseTextForHash(child.text || '');
+    const htmlLen = childHtml.length;
+    const textLen = childText.length;
+
+    if (!childHtml.trim()) {
+      continue;
+    }
+
+    if (currentChildren.length && (htmlLength + htmlLen > MAX_CHUNK_HTML_LENGTH || textLength + textLen > MAX_CHUNK_TEXT_LENGTH)) {
+      flush();
+    }
+
+    if (!currentChildren.length && (htmlLen > MAX_CHUNK_HTML_LENGTH || textLen > MAX_CHUNK_TEXT_LENGTH)) {
+      // Single item is still too large – emit as-is and warn once.
+      fragments.push({ html: wrapNodeHtml(node, [childHtml]), text: childText });
+      continue;
+    }
+
+    currentChildren.push(childHtml);
+    if (childText) {
+      currentTextParts.push(childText);
+    }
+    htmlLength += htmlLen;
+    textLength += textLen;
+  }
+
+  flush();
+  return fragments.length ? fragments : [{
+    html: `${startTag}${node.innerHTML || ''}${endTag}`,
+    text: normaliseTextForHash(node.text || '')
+  }];
+}
+
+function splitPlainTextContent(text) {
+  const safeText = String(text || '').trim();
+  if (!safeText) {return [];}
+  if (safeText.length <= MAX_CHUNK_TEXT_LENGTH) {
+    return [safeText];
+  }
+  const segments = [];
+  let remaining = safeText;
+  while (remaining.length > MAX_CHUNK_TEXT_LENGTH) {
+    let idx = remaining.lastIndexOf(' ', MAX_CHUNK_TEXT_LENGTH);
+    if (idx <= 0 || idx < MAX_CHUNK_TEXT_LENGTH * 0.5) {
+      idx = MAX_CHUNK_TEXT_LENGTH;
+    }
+    segments.push(remaining.slice(0, idx));
+    remaining = remaining.slice(idx).trimStart();
+  }
+  if (remaining.length) {
+    segments.push(remaining);
+  }
+  return segments;
+}
+
 function updateAnchorContextForChunk(chunk, htmlSnippet, anchorMap) {
   const wrapper = parse(`<wrapper>${htmlSnippet}</wrapper>`, { lowerCaseTagName: false, comment: false });
   const container = wrapper.firstChild || wrapper;
@@ -483,22 +585,65 @@ function extractBlocksFromDom(root, anchors) {
   const chunks = [];
   let order = 0;
 
-  const pushChunk = (serialized, text) => {
-    const safeHtml = String(serialized || '').trim();
-    if (!safeHtml) return;
-    const sourceText = normaliseTextForHash(text || '');
+  const addChunk = (html, normalizedText) => {
     const chunkOrder = ++order;
-    const chunkId = createDeterministicId('chunk', [chunkOrder, safeHtml]);
+    const chunkId = createDeterministicId('chunk', [chunkOrder, html]);
     const chunk = {
       id: chunkId,
       blockId: chunkId,
       order: chunkOrder,
-      sourceHtml: safeHtml,
-      sourceText,
+      sourceHtml: html,
+      sourceText: normalizedText,
       anchorIds: []
     };
-    updateAnchorContextForChunk(chunk, safeHtml, anchorMap);
+    updateAnchorContextForChunk(chunk, html, anchorMap);
     chunks.push(chunk);
+  };
+
+  const splitLargeChunk = (sourceNode, html, normalizedText) => {
+    if (!sourceNode || sourceNode.nodeType !== 1) {return [];}
+    if (sourceNode.classList && sourceNode.classList.contains('pdf-page')) {
+      return splitPdfPageNode(sourceNode);
+    }
+    if (sourceNode.classList && sourceNode.classList.contains('pdf-document')) {
+      const fragments = [];
+      const pages = sourceNode.querySelectorAll('section.pdf-page');
+      for (const page of pages) {
+        const splits = splitPdfPageNode(page);
+        if (splits.length) {
+          fragments.push(...splits);
+        } else {
+          fragments.push({ html: page.toString(), text: normaliseTextForHash(page.text || '') });
+        }
+      }
+      return fragments;
+    }
+    return [];
+  };
+
+  const emitChunk = (html, text, sourceNode) => {
+    const safeHtml = String(html || '').trim();
+    if (!safeHtml) {return;}
+    const normalizedText = normaliseTextForHash(text || '');
+    if (safeHtml.length <= MAX_CHUNK_HTML_LENGTH && normalizedText.length <= MAX_CHUNK_TEXT_LENGTH) {
+      addChunk(safeHtml, normalizedText);
+      return;
+    }
+    const fragments = splitLargeChunk(sourceNode, safeHtml, normalizedText);
+    if (fragments.length) {
+      for (const fragment of fragments) {
+        const fragmentHtml = String(fragment?.html || '').trim();
+        if (!fragmentHtml) {continue;}
+        addChunk(fragmentHtml, normaliseTextForHash(fragment.text || ''));
+      }
+      return;
+    }
+    console.warn('extractBlocksFromDom: chunk exceeds limits but could not be split', {
+      htmlLength: safeHtml.length,
+      textLength: normalizedText.length,
+      tagName: sourceNode?.tagName || null
+    });
+    addChunk(safeHtml, normalizedText);
   };
 
   const walker = body ? body.childNodes : root.childNodes;
@@ -508,31 +653,64 @@ function extractBlocksFromDom(root, anchors) {
     if (node.nodeType === 3) {
       const text = String(node.rawText || '').trim();
       if (!text) continue;
-      pushChunk(`<p>${text}</p>`, text);
+      const segments = splitPlainTextContent(text);
+      if (segments.length) {
+        for (const segment of segments) {
+          emitChunk(`<p>${segment}</p>`, segment, null);
+        }
+      } else {
+        emitChunk(`<p>${text}</p>`, text, null);
+      }
       continue;
     }
+
+    if (node.classList && node.classList.contains('pdf-document')) {
+      const pages = node.querySelectorAll('section.pdf-page');
+      if (pages.length) {
+        for (const page of pages) {
+          emitChunk(page.toString(), page.text || '', page);
+        }
+        continue;
+      }
+    }
+
     const tagName = String(node.tagName || '').toLowerCase();
-    const serialized = node.toString().trim();
+    const serialized = node.toString();
+    if (!serialized?.trim()) {continue;}
     const textContent = String(node.text || '').replace(/\s+/g, ' ').trim();
-    if (!serialized) continue;
+
     if (BLOCK_TAGS.has(tagName) || node.childNodes.length === 0) {
-      pushChunk(serialized, textContent);
+      emitChunk(serialized, textContent, node);
       continue;
     }
+
     for (const child of node.childNodes || []) {
-      if (!child) continue;
-      const childHtml = child.toString().trim();
-      if (!childHtml) continue;
+      if (!child || child.nodeType === 8) continue;
+      if (child.nodeType === 3) {
+        const childText = String(child.rawText || '').trim();
+        if (!childText) continue;
+        const segments = splitPlainTextContent(childText);
+        if (segments.length) {
+          for (const segment of segments) {
+            emitChunk(`<p>${segment}</p>`, segment, null);
+          }
+        } else {
+          emitChunk(`<p>${childText}</p>`, childText, null);
+        }
+        continue;
+      }
+      const childHtml = child.toString();
+      if (!childHtml?.trim()) continue;
       const childText = String(child.text || '').replace(/\s+/g, ' ').trim();
       if (!childText && child.nodeType !== 1 && !childHtml.includes('asset-anchor')) continue;
-      pushChunk(childHtml, childText);
+      emitChunk(childHtml, childText, child);
     }
   }
 
   if (!chunks.length) {
     const fallbackText = normaliseTextForHash(root.textContent || '');
     if (fallbackText) {
-      pushChunk(`<p>${fallbackText}</p>`, fallbackText);
+      emitChunk(`<p>${fallbackText}</p>`, fallbackText, null);
     }
   }
 
