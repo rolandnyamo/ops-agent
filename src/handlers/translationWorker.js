@@ -186,7 +186,58 @@ async function handlePayload(payload, meta = {}) {
     console.warn('translationWorker received unsupported action', { action, payload });
     return;
   }
-  await handler(payload, meta);
+
+  try {
+    await handler(payload, meta);
+  } catch (err) {
+    console.error('translationWorker mode handler error', { action, payload, error: err.message, stack: err.stack });
+
+    // For chunk processing errors, mark the specific chunk as failed
+    if (action === 'process-chunk' && payload?.translationId && payload?.chunkOrder !== undefined) {
+      try {
+        await failTranslation({
+          translationId: payload.translationId,
+          ownerId: payload.ownerId || 'default',
+          errorMessage: `Chunk processing failed: ${err.message}`,
+          context: {
+            chunkOrder: payload.chunkOrder,
+            error: err.message,
+            action
+          },
+          fileName: 'chunk-processing'
+        });
+      } catch (failErr) {
+        console.error('Failed to mark translation as failed', {
+          translationId: payload.translationId,
+          error: failErr.message
+        });
+      }
+    }
+
+    // For orchestration errors, mark the entire translation as failed
+    if ((action === 'start' || action === 'orchestrate') && payload?.translationId) {
+      try {
+        await failTranslation({
+          translationId: payload.translationId,
+          ownerId: payload.ownerId || 'default',
+          errorMessage: `Translation orchestration failed: ${err.message}`,
+          context: {
+            error: err.message,
+            action
+          },
+          fileName: 'orchestration'
+        });
+      } catch (failErr) {
+        console.error('Failed to mark translation as failed', {
+          translationId: payload.translationId,
+          error: failErr.message
+        });
+      }
+    }
+
+    // Re-throw the error so it can be handled at higher levels if needed
+    throw err;
+  }
 }
 
 exports.handler = async (event) => {
@@ -203,7 +254,39 @@ exports.handler = async (event) => {
       try {
         await handlePayload(payload, { messageId: record.messageId });
       } catch (err) {
-        console.error('translationWorker handler error', { messageId: record.messageId, error: err.message });
+        console.error('translationWorker handler error', {
+          messageId: record.messageId,
+          error: err.message,
+          payload,
+          stack: err.stack
+        });
+
+        // Log the failure for monitoring
+        try {
+          await recordLog({
+            translationId: payload?.translationId,
+            ownerId: payload?.ownerId || 'default',
+            category: 'error-handling',
+            stage: 'worker-error',
+            eventType: 'handler-error',
+            status: 'FAILED',
+            message: `Translation worker error: ${err.message}`,
+            metadata: {
+              action: payload?.action,
+              messageId: record.messageId,
+              errorType: err.name || 'Error'
+            },
+            context: {
+              error: err.message,
+              stack: err.stack,
+              payload
+            }
+          });
+        } catch (logErr) {
+          console.error('Failed to log translation worker error', {
+            error: logErr.message
+          });
+        }
       }
     }
     return;

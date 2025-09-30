@@ -47,8 +47,9 @@ function createModeHandlers(deps) {
     const translationId = payload?.translationId;
     const ownerId = payload?.ownerId || 'default';
     if (!translationId) {
-      console.warn('orchestrate invoked without translationId', { payload });
-      return;
+      const error = new Error('orchestrate invoked without translationId');
+      console.warn(error.message, { payload });
+      throw error;
     }
 
     if (!RAW_BUCKET || !queueUrl) {
@@ -301,8 +302,9 @@ function createModeHandlers(deps) {
     const ownerId = payload?.ownerId || 'default';
     const chunkOrder = payload?.chunkOrder;
     if (!translationId || typeof chunkOrder === 'undefined') {
-      console.warn('processChunk invoked with invalid payload', { payload });
-      return;
+      const error = new Error('processChunk invoked with invalid payload');
+      console.warn(error.message, { payload });
+      throw error;
     }
 
     let item;
@@ -310,13 +312,14 @@ function createModeHandlers(deps) {
       item = await getTranslationItem(translationId, ownerId);
     } catch (err) {
       console.error('processChunk missing translation item', { translationId, ownerId, error: err.message });
-      return;
+      throw new Error(`Failed to get translation item: ${err.message}`);
     }
 
     const chunk = await getChunk(translationId, ownerId, chunkOrder);
     if (!chunk) {
-      console.warn('processChunk could not find chunk', { translationId, ownerId, chunkOrder });
-      return;
+      const error = `Could not find chunk ${chunkOrder} for translation ${translationId}`;
+      console.error('processChunk could not find chunk', { translationId, ownerId, chunkOrder });
+      throw new Error(error);
     }
 
     if (chunk.status === 'COMPLETED') {
@@ -469,8 +472,9 @@ function createModeHandlers(deps) {
     const translationId = payload?.translationId;
     const ownerId = payload?.ownerId || 'default';
     if (!translationId) {
-      console.warn('assemble invoked without translationId', { payload });
-      return;
+      const error = new Error('assemble invoked without translationId');
+      console.warn(error.message, { payload });
+      throw error;
     }
 
     let item;
