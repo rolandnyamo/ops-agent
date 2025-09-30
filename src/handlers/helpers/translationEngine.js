@@ -29,6 +29,38 @@ function stripWrapperTags(html) {
   return trimmed;
 }
 
+function extractRootWrapper(html) {
+  const match = /^<([a-zA-Z0-9:-]+)([^>]*)>([\s\S]*)<\/\1>$/i.exec(String(html || '').trim());
+  if (!match) {
+    return null;
+  }
+  return {
+    tag: match[1],
+    attrs: match[2] || '',
+  };
+}
+
+function enforceRootWrapper(sourceHtml, translatedHtml) {
+  const wrapper = extractRootWrapper(sourceHtml);
+  if (!wrapper) {
+    return translatedHtml;
+  }
+  const trimmed = String(translatedHtml || '').trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  const pattern = new RegExp(`^<${wrapper.tag}(?:[\s>])`, 'i');
+  if (pattern.test(trimmed)) {
+    return trimmed;
+  }
+  const attrs = wrapper.attrs?.trim() ? ` ${wrapper.attrs.trim()}` : '';
+  const wrapped = `<${wrapper.tag}${attrs}>${trimmed}</${wrapper.tag}>`;
+  if (console && typeof console.debug === 'function') {
+    console.debug('translationEngine: rewrapped translation output to preserve root element', { tag: wrapper.tag });
+  }
+  return wrapped;
+}
+
 class TranslationError extends Error {
   constructor(message, details) {
     super(message);
@@ -123,6 +155,7 @@ async function translateChunkOpenAI({ html, sourceLanguage, targetLanguage, mode
     if (!out) {
       throw new TranslationError('Empty translation output');
     }
+    out = enforceRootWrapper(html, out);
     return out;
   } catch (err) {
     if (err instanceof TranslationError) throw err;

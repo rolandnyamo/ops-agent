@@ -9,7 +9,8 @@ const {
   scanDocs,
   evaluateDoc,
   invokeIngestWorker,
-  sendJobNotification
+  sendJobNotification,
+  enqueueChunkProcessing
 } = require('./helpers/jobMonitor');
 const { appendJobLog } = require('./helpers/jobLogs');
 const { deleteAllChunks } = require('./helpers/translationStore');
@@ -21,6 +22,7 @@ const DOCS_TABLE = process.env.DOCS_TABLE;
 const STALE_MINUTES = Number(process.env.JOB_HEALTH_STALE_MINUTES || 15);
 const RETRY_LIMIT = Number(process.env.JOB_HEALTH_MAX_RETRIES || 3);
 const RAW_BUCKET = process.env.RAW_BUCKET;
+const MAX_CHUNK_RETRIES = Math.max(0, Number(process.env.TRANSLATION_CHUNK_MAX_RETRIES || 3));
 
 function now() {
   return new Date().toISOString();
@@ -180,6 +182,7 @@ exports.handler = async () => {
     translationsChecked: 0,
     translationsRestarted: 0,
     translationsFailed: 0,
+    translationChunksRequeued: 0,
     translationsCancelledCleaned: 0,
     docsChecked: 0,
     docsRestarted: 0,
@@ -190,6 +193,77 @@ exports.handler = async () => {
   result.translationsChecked = translations.length;
   for (const translation of translations) {
     const report = await evaluateTranslation(translation, { staleMinutes: STALE_MINUTES });
+
+    const failedChunks = (report.chunks || []).filter(chunk => chunk?.status === 'FAILED');
+    if (failedChunks.length) {
+      const reason = 'chunk-failed';
+      const retries = await incrementTranslationRetry(report.translationId, report.ownerId, reason);
+      let exhausted = false;
+      const retriedOrders = [];
+      for (const chunk of failedChunks) {
+        const attempts = Number(chunk.machineAttempts || 0);
+        const retriesAllowed = MAX_CHUNK_RETRIES > 0;
+        if (!retriesAllowed || attempts >= MAX_CHUNK_RETRIES) {
+          exhausted = true;
+          continue;
+        }
+        await enqueueChunkProcessing({ translationId: report.translationId, ownerId: report.ownerId, chunk });
+        retriedOrders.push(chunk.order);
+        await appendJobLog({
+          jobType: 'translation',
+          jobId: report.translationId,
+          ownerId: report.ownerId,
+          category: 'health-monitoring',
+          stage: 'chunk-retry',
+          eventType: 'chunk-retry-scheduled',
+          status: 'PROCESSING',
+          message: `Health check requeued chunk ${chunk.order} (machineAttempts=${attempts})`,
+          metadata: {
+            chunkOrder: chunk.order,
+            machineAttempts: attempts,
+            maxChunkRetries: MAX_CHUNK_RETRIES,
+            healthRetries: retries
+          }
+        });
+      }
+
+      if (exhausted || retries > RETRY_LIMIT) {
+        await markTranslationFailed(report.translationId, report.ownerId, exhausted ? 'chunk-max-retries' : reason);
+        await sendJobNotification({
+          jobType: 'translation',
+          status: 'failed',
+          fileName: translation.originalFilename || translation.title || translation.translationId,
+          jobId: report.translationId,
+          ownerId: report.ownerId
+        });
+        await appendJobLog({
+          jobType: 'translation',
+          jobId: report.translationId,
+          ownerId: report.ownerId,
+          category: 'health-monitoring',
+          stage: 'auto-fail',
+          eventType: 'health-check-failed',
+          status: 'FAILED',
+          message: exhausted
+            ? 'Translation marked failed after chunk exceeded max retries'
+            : 'Translation marked failed after repeated chunk failures',
+          actor: { type: 'system', source: 'health-check', role: 'system' },
+          metadata: {
+            reason: exhausted ? 'chunk-max-retries' : reason,
+            retries,
+            failedChunks: failedChunks.map(chunk => ({ order: chunk.order, machineAttempts: chunk.machineAttempts }))
+          }
+        });
+        result.translationsFailed += 1;
+        continue;
+      }
+
+      if (retriedOrders.length) {
+        result.translationChunksRequeued += retriedOrders.length;
+      }
+      continue;
+    }
+
     if (!report.missingChunks && !report.stale) {
       continue;
     }

@@ -9,6 +9,8 @@ const {
   getChunk
 } = require('./translationStore');
 
+const MAX_CHUNK_RETRIES = Math.max(0, Number(process.env.TRANSLATION_CHUNK_MAX_RETRIES || 3));
+
 function chunkMessagePayload({ translationId, ownerId, chunk }) {
   return {
     action: 'process-chunk',
@@ -446,6 +448,13 @@ function createModeHandlers(deps) {
         }
       });
 
+      const allChunks = await listChunks(translationId, ownerId);
+      const summary = summariseChunks(allChunks);
+      await updateTranslationItem(translationId, ownerId, {
+        processedChunks: summary.completed,
+        failedChunks: summary.failed
+      });
+
       await recordLog({
         translationId,
         ownerId,
@@ -457,6 +466,29 @@ function createModeHandlers(deps) {
         metadata: { chunkOrder },
         failureReason: translateErr.message
       });
+
+      const shouldRetry = MAX_CHUNK_RETRIES > 0 && attempt < MAX_CHUNK_RETRIES;
+      if (shouldRetry) {
+        await recordLog({
+          translationId,
+          ownerId,
+          category: 'chunk-processing',
+          stage: 'machine-translation',
+          eventType: 'chunk-retry-scheduled',
+          status: 'PROCESSING',
+          message: `Chunk ${chunkOrder} scheduled for retry (attempt ${attempt + 1} of ${MAX_CHUNK_RETRIES})`,
+          metadata: { chunkOrder, attempt, maxRetries: MAX_CHUNK_RETRIES }
+        });
+
+        await sendQueueMessage({
+          action: 'process-chunk',
+          translationId,
+          ownerId,
+          chunkOrder,
+          chunkId: chunk.chunkId
+        });
+        return;
+      }
 
       await failTranslation({
         translationId,

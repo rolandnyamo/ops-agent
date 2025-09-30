@@ -68,15 +68,19 @@ function createPageRenderer(htmlPages, warnings, renderOverrides = {}) {
 
 function renderPageContent(pageNumber, viewport, textContent, warnings) {
   const items = (textContent && Array.isArray(textContent.items)) ? textContent.items : [];
-  const pageWidth = viewport ? Number(viewport.width || 0) : 0;
-  const pageHeight = viewport ? Number(viewport.height || 0) : 0;
-  const spans = [];
+  let pageWidth = viewport ? Number(viewport.width || 0) : 0;
+  let pageHeight = viewport ? Number(viewport.height || 0) : 0;
   const textBuffer = [];
   let lastBaseline = null;
+  let maxRight = 0;
+  let maxBaseline = 0;
+
+  const spanData = [];
 
   for (const item of items) {
     const str = item && typeof item.str === 'string' ? item.str : '';
     if (!str) continue;
+
     const transform = Array.isArray(item.transform) && item.transform.length >= 6
       ? item.transform
       : [1, 0, 0, 1, 0, 0];
@@ -84,45 +88,6 @@ function renderPageContent(pageNumber, viewport, textContent, warnings) {
     const fontWidth = Math.hypot(transform[0], transform[1]) || fontHeight || 1;
     const left = transform[4] || 0;
     const baseline = transform[5] || 0;
-    const top = pageHeight ? pageHeight - baseline : 0;
-
-    const styles = [
-      'position:absolute',
-      'white-space:pre',
-      'transform-origin:0 0'
-    ];
-
-    styles.push(`left:${left.toFixed(2)}px`);
-    styles.push(`top:${(top - fontHeight).toFixed(2)}px`);
-
-    if (fontHeight) {
-      styles.push(`font-size:${fontHeight.toFixed(2)}px`);
-      styles.push(`line-height:${fontHeight.toFixed(2)}px`);
-    }
-
-    if (fontWidth && fontHeight && Math.abs(fontWidth - fontHeight) > 0.1) {
-      const scale = fontWidth / (fontHeight || 1);
-      if (Number.isFinite(scale) && scale > 0 && Math.abs(scale - 1) > 0.05) {
-        styles.push(`transform:scaleX(${scale.toFixed(4)})`);
-      }
-    }
-
-    if (item.fontName) {
-      const fontFamily = sanitizeFontFamily(item.fontName);
-      if (fontFamily) {
-        styles.push(`font-family:${fontFamily}`);
-      }
-    }
-
-    if (typeof item.charSpacing === 'number' && item.charSpacing !== 0) {
-      styles.push(`letter-spacing:${item.charSpacing.toFixed(2)}px`);
-    }
-    if (typeof item.wordSpacing === 'number' && item.wordSpacing !== 0) {
-      styles.push(`word-spacing:${item.wordSpacing.toFixed(2)}px`);
-    }
-
-    const safeText = escapeHtml(str);
-    spans.push(`<span class="pdf-text" style="${styles.join(';')}">${safeText}</span>`);
 
     if (lastBaseline !== null) {
       const delta = Math.abs(lastBaseline - baseline);
@@ -132,7 +97,65 @@ function renderPageContent(pageNumber, viewport, textContent, warnings) {
     }
     textBuffer.push(str);
     lastBaseline = baseline;
+
+    const spanWidth = typeof item.width === 'number' ? item.width : fontWidth;
+    const right = left + (spanWidth || 0);
+    const baselineExtent = baseline + fontHeight;
+    maxRight = Math.max(maxRight, right);
+    maxBaseline = Math.max(maxBaseline, baselineExtent);
+
+    spanData.push({
+      text: escapeHtml(str),
+      left,
+      baseline,
+      fontHeight,
+      fontWidth,
+      charSpacing: typeof item.charSpacing === 'number' ? item.charSpacing : null,
+      wordSpacing: typeof item.wordSpacing === 'number' ? item.wordSpacing : null,
+      fontName: item.fontName || null
+    });
   }
+
+  if (pageWidth <= 0 && maxRight > 0) {
+    pageWidth = Math.ceil(maxRight + 8);
+  }
+  if (pageHeight <= 0 && maxBaseline > 0) {
+    pageHeight = Math.ceil(maxBaseline + 8);
+  }
+
+  const spans = spanData.map(entry => {
+    const top = pageHeight ? pageHeight - entry.baseline : 0;
+    const styles = [
+      'position:absolute',
+      'white-space:pre',
+      'transform-origin:0 0'
+    ];
+    styles.push(`left:${entry.left.toFixed(2)}px`);
+    styles.push(`top:${(top - entry.fontHeight).toFixed(2)}px`);
+    if (entry.fontHeight) {
+      styles.push(`font-size:${entry.fontHeight.toFixed(2)}px`);
+      styles.push(`line-height:${entry.fontHeight.toFixed(2)}px`);
+    }
+    if (entry.fontWidth && entry.fontHeight && Math.abs(entry.fontWidth - entry.fontHeight) > 0.1) {
+      const scale = entry.fontWidth / (entry.fontHeight || 1);
+      if (Number.isFinite(scale) && scale > 0 && Math.abs(scale - 1) > 0.05) {
+        styles.push(`transform:scaleX(${scale.toFixed(4)})`);
+      }
+    }
+    if (entry.fontName) {
+      const fontFamily = sanitizeFontFamily(entry.fontName);
+      if (fontFamily) {
+        styles.push(`font-family:${fontFamily}`);
+      }
+    }
+    if (entry.charSpacing) {
+      styles.push(`letter-spacing:${entry.charSpacing.toFixed(2)}px`);
+    }
+    if (entry.wordSpacing) {
+      styles.push(`word-spacing:${entry.wordSpacing.toFixed(2)}px`);
+    }
+    return `<span class="pdf-text" style="${styles.join(';')}">${entry.text}</span>`;
+  });
 
   if (!spans.length) {
     warnings.push(`Page ${pageNumber} contains no extractable text layer.`);

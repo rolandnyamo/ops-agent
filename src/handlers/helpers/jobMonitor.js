@@ -112,6 +112,29 @@ async function restartTranslation(translationId, ownerId) {
   }));
 }
 
+async function enqueueChunkProcessing({ translationId, ownerId = 'default', chunk, delaySeconds = 0 }) {
+  if (!TRANSLATION_QUEUE_URL) {
+    console.warn('enqueueChunkProcessing called without TRANSLATION_QUEUE_URL');
+    return;
+  }
+  if (!chunk || typeof chunk.order === 'undefined') {
+    console.warn('enqueueChunkProcessing invoked with invalid chunk', { translationId, ownerId, chunk });
+    return;
+  }
+  const payload = {
+    action: 'process-chunk',
+    translationId,
+    ownerId,
+    chunkOrder: chunk.order,
+    chunkId: chunk.chunkId
+  };
+  await sqs.send(new SendMessageCommand({
+    QueueUrl: TRANSLATION_QUEUE_URL,
+    MessageBody: JSON.stringify(payload),
+    ...(delaySeconds ? { DelaySeconds: Math.min(900, Math.max(0, delaySeconds)) } : {})
+  }));
+}
+
 async function invokeIngestWorker(doc) {
   if (!INGEST_WORKER_FUNCTION || !RAW_BUCKET) return;
   const key = doc.fileKey;
@@ -158,8 +181,8 @@ module.exports = {
   evaluateTranslation,
   evaluateDoc,
   restartTranslation,
+  enqueueChunkProcessing,
   invokeIngestWorker,
   markTranslationFailed,
   sendJobNotification
 };
-
