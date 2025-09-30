@@ -1,17 +1,18 @@
 const { DynamoDBClient, ScanCommand, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
-const { EventBridgeClient, PutEventsCommand } = require('@aws-sdk/client-eventbridge');
+const { SQSClient, SendMessageCommand } = require('@aws-sdk/client-sqs');
 const { LambdaClient, InvokeCommand } = require('@aws-sdk/client-lambda');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const { listChunks, summariseChunks } = require('./translationStore');
 const { sendJobNotification } = require('./notifications');
 
 const ddb = new DynamoDBClient({});
-const eb = new EventBridgeClient({});
+const sqs = new SQSClient({});
 const lambda = new LambdaClient({});
 
 const DOCS_TABLE = process.env.DOCS_TABLE;
 const RAW_BUCKET = process.env.RAW_BUCKET;
 const INGEST_WORKER_FUNCTION = process.env.INGEST_WORKER_FUNCTION_NAME;
+const TRANSLATION_QUEUE_URL = process.env.TRANSLATION_QUEUE_URL;
 
 function minutesAgo(minutes) {
   return Date.now() - minutes * 60 * 1000;
@@ -97,12 +98,17 @@ async function evaluateDoc(doc, { staleMinutes }) {
 }
 
 async function restartTranslation(translationId, ownerId) {
-  await eb.send(new PutEventsCommand({
-    Entries: [{
-      Source: 'ops-agent',
-      DetailType: 'TranslationRequested',
-      Detail: JSON.stringify({ translationId, ownerId })
-    }]
+  if (!TRANSLATION_QUEUE_URL) {
+    console.warn('restartTranslation called without TRANSLATION_QUEUE_URL');
+    return;
+  }
+  await sqs.send(new SendMessageCommand({
+    QueueUrl: TRANSLATION_QUEUE_URL,
+    MessageBody: JSON.stringify({
+      action: 'start',
+      translationId,
+      ownerId
+    })
   }));
 }
 

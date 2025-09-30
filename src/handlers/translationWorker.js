@@ -1,18 +1,18 @@
 const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { DynamoDBClient, GetItemCommand, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
+const { SQSClient, SendMessageCommand, SendMessageBatchCommand } = require('@aws-sdk/client-sqs');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
-const { prepareTranslationDocument, assembleHtmlDocument } = require('./helpers/documentParser');
-const { persistAssetsAndAnchors } = require('./helpers/assetStore');
-const { getTranslationEngine } = require('./helpers/translationEngine');
-const { ensureChunkSource, listChunks, updateChunkState, summariseChunks } = require('./helpers/translationStore');
-const { sendJobNotification } = require('./helpers/notifications');
 const { appendJobLog } = require('./helpers/jobLogs');
+const { sendJobNotification } = require('./helpers/notifications');
+const { createModeHandlers } = require('./helpers/translationWorkerModes');
 
 const s3 = new S3Client({});
 const ddb = new DynamoDBClient({});
+const sqs = new SQSClient({});
 
 const RAW_BUCKET = process.env.RAW_BUCKET;
 const DOCS_TABLE = process.env.DOCS_TABLE;
+const QUEUE_URL = process.env.TRANSLATION_QUEUE_URL;
 
 function now() {
   return new Date().toISOString();
@@ -29,7 +29,39 @@ async function putObject(bucket, key, body, contentType) {
   await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }));
 }
 
+async function sendQueueMessage(payload) {
+  if (!QUEUE_URL) {
+    console.warn('sendQueueMessage called without TRANSLATION_QUEUE_URL');
+    return;
+  }
+  await sqs.send(new SendMessageCommand({
+    QueueUrl: QUEUE_URL,
+    MessageBody: JSON.stringify(payload)
+  }));
+}
+
+async function sendQueueBatch(messages) {
+  if (!QUEUE_URL || !Array.isArray(messages) || !messages.length) {
+    if (!QUEUE_URL) {
+      console.warn('sendQueueBatch called without TRANSLATION_QUEUE_URL');
+    }
+    return;
+  }
+  const copy = Array.from(messages, (msg) => JSON.stringify(msg));
+  let index = 0;
+  while (index < copy.length) {
+    const batch = copy.slice(index, index + 10);
+    const entries = batch.map((body, idx) => ({
+      Id: `${index + idx}`,
+      MessageBody: body
+    }));
+    await sqs.send(new SendMessageBatchCommand({ QueueUrl: QUEUE_URL, Entries: entries }));
+    index += 10;
+  }
+}
+
 async function failTranslation({ translationId, ownerId, errorMessage, context, fileName, attempt }) {
+  if (!translationId) return;
   console.error('translationWorker failure', { translationId, ownerId, errorMessage, context });
   try {
     await updateTranslationItem(translationId, ownerId, {
@@ -62,6 +94,9 @@ async function failTranslation({ translationId, ownerId, errorMessage, context, 
 }
 
 async function getTranslationItem(translationId, ownerId = 'default') {
+  if (!DOCS_TABLE) {
+    throw new Error('DOCS_TABLE not configured');
+  }
   const key = { PK: `TRANSLATION#${translationId}`, SK: `TRANSLATION#${ownerId}` };
   const res = await ddb.send(new GetItemCommand({ TableName: DOCS_TABLE, Key: marshall(key) }));
   if (!res.Item) {
@@ -71,6 +106,9 @@ async function getTranslationItem(translationId, ownerId = 'default') {
 }
 
 async function updateTranslationItem(translationId, ownerId = 'default', patch) {
+  if (!DOCS_TABLE) {
+    throw new Error('DOCS_TABLE not configured');
+  }
   const names = { '#u': 'updatedAt' };
   const values = { ':u': now() };
   const sets = ['#u = :u'];
@@ -118,492 +156,64 @@ async function recordLog(entry) {
   }
 }
 
+const modeHandlers = createModeHandlers({
+  RAW_BUCKET,
+  DOCS_TABLE,
+  queueUrl: QUEUE_URL,
+  s3,
+  ddb,
+  sqs,
+  now,
+  readObject,
+  putObject,
+  failTranslation,
+  getTranslationItem,
+  updateTranslationItem,
+  recordLog,
+  sendQueueMessage,
+  sendQueueBatch,
+  sendJobNotification
+});
+
+async function handlePayload(payload, meta = {}) {
+  if (!payload || typeof payload !== 'object') {
+    console.warn('handlePayload received invalid payload', { payload, meta });
+    return;
+  }
+  const action = String(payload.action || payload.mode || 'start').toLowerCase();
+  const handler = modeHandlers[action];
+  if (!handler) {
+    console.warn('translationWorker received unsupported action', { action, payload });
+    return;
+  }
+  await handler(payload, meta);
+}
+
 exports.handler = async (event) => {
-  const detail = event?.detail || {};
-  const translationId = detail.translationId;
-  const ownerId = detail.ownerId || 'default';
-  if (!translationId) {
-    console.warn('translationWorker invoked without translationId');
-    return;
-  }
-
-  if (!RAW_BUCKET) {
-    await failTranslation({ translationId, ownerId, errorMessage: 'RAW_BUCKET not configured' });
-    return;
-  }
-
-  if (!DOCS_TABLE) {
-    await failTranslation({ translationId, ownerId, errorMessage: 'DOCS_TABLE not configured' });
-    return;
-  }
-
-  let item;
-  try {
-    console.log('translationWorker start', { translationId, ownerId, detail });
-    item = await getTranslationItem(translationId, ownerId);
-    const attempt = Number(item.healthCheckRetries || 0) + 1;
-    const originalKey = item.originalFileKey;
-    if (!originalKey) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Original file key missing on translation item', context: item, fileName: item?.originalFilename, attempt });
-      return;
-    }
-
-    const startedAt = item.startedAt || now();
-    await updateTranslationItem(translationId, ownerId, { status: 'PROCESSING', startedAt });
-    await recordLog({
-      translationId,
-      ownerId,
-      category: 'processing-kickoff',
-      stage: 'start',
-      eventType: 'processing-started',
-      status: 'PROCESSING',
-      message: 'Translation processing started',
-      metadata: { startedAt },
-      attempt
-    });
-
-    let buffer, contentType;
-    try {
-      ({ buffer, contentType } = await readObject(RAW_BUCKET, originalKey));
-    } catch (readErr) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to read source document from S3', context: { originalKey, error: readErr.message }, fileName: item.originalFilename, attempt });
-      return;
-    }
-
-    let document;
-    try {
-      document = await prepareTranslationDocument({
-        buffer,
-        contentType,
-        filename: item.originalFilename || originalKey.split('/').pop() || 'document'
-      });
-    } catch (parseErr) {
-      // Enhanced logging for debugging document parsing errors
-      console.error('Document parsing error details:', {
-        translationId,
-        ownerId,
-        filename: item.originalFilename,
-        contentType,
-        error: parseErr.message,
-        stack: parseErr.stack
-      });
-
-      // Also log to DynamoDB for audit purposes with enhanced error details
-      await recordLog({
-        translationId,
-        ownerId,
-        eventType: 'parsing-error',
-        status: 'FAILED',
-        message: `Document parsing failed: ${parseErr.message}`,
-        metadata: {
-          filename: item.originalFilename,
-          contentType,
-          errorType: parseErr.name || 'ParseError',
-          originalError: parseErr.message
-        },
-        context: {
-          parseError: parseErr.message,
-          filename: item.originalFilename || originalKey.split('/').pop() || 'document',
-          stackTrace: parseErr.stack
-        }
-      });
-
-      // Provide more specific error messages for common issues
-      let errorMessage = 'Failed to prepare translation document';
-      if (parseErr.message.includes('bad XRef') ||
-          parseErr.message.includes('Invalid PDF') ||
-          parseErr.message.includes('PDF parsing failed')) {
-        errorMessage = 'PDF file appears to be corrupted or invalid. Please try re-uploading the file or ensure the PDF is not password-protected.';
-      } else if (parseErr.message.includes('Unsupported content type')) {
-        errorMessage = 'File format not supported for translation. Please upload a PDF, Word document (DOC/DOCX), HTML, RTF, ODT, or text file.';
-      } else if (parseErr.message.includes('DOCX parsing error') ||
-                 parseErr.message.includes('Cannot read properties of null')) {
-        errorMessage = 'Word document parsing error. The file may be corrupted or contain unsupported elements. Please try re-uploading or converting to a different format.';
-      }
-
-      await failTranslation({
-        translationId,
-        ownerId,
-        errorMessage,
-        context: {
-          error: parseErr.message,
-          filename: item.originalFilename || originalKey.split('/').pop() || 'document'
-        },
-        fileName: item.originalFilename,
-        attempt
-      });
-      return;
-    }
-
-    await recordLog({
-      translationId,
-      ownerId,
-      category: 'processing-kickoff',
-      stage: 'document-parse',
-      eventType: 'document-parsed',
-      status: 'PROCESSING',
-      message: 'Source document parsed for translation',
-      metadata: {
-        contentType,
-        chunkEstimate: Array.isArray(document?.chunks) ? document.chunks.length : 0,
-        assetCount: Array.isArray(document?.assets) ? document.assets.length : 0
-      },
-      attempt
-    });
-
-    let assetContext = { assets: [], anchors: [] };
-    let enrichedAssets = document.assets || [];
-    let resolvedAnchors = document.anchors || [];
-    try {
-      assetContext = await persistAssetsAndAnchors({
-        s3,
-        ddb,
-        bucket: RAW_BUCKET,
-        tableName: DOCS_TABLE,
-        translationId,
-        ownerId,
-        assets: document.assets || [],
-        anchors: document.anchors || []
-      });
-      if (assetContext?.assets?.length) {
-        const assetMap = new Map(assetContext.assets.map(asset => [asset.assetId, asset]));
-        enrichedAssets = (document.assets || []).map(asset => {
-          const stored = assetMap.get(asset.assetId);
-          if (!stored) {return asset;}
-          return { ...asset, s3Bucket: stored.s3Bucket || null, s3Key: stored.s3Key || null };
-        });
-      }
-      if (assetContext?.anchors?.length) {
-        resolvedAnchors = assetContext.anchors;
-      }
-    } catch (assetErr) {
-      await failTranslation({
-        translationId,
-        ownerId,
-        errorMessage: 'Failed to persist asset metadata',
-        context: { error: assetErr.message },
-        fileName: item.originalFilename
-      });
-      return;
-    }
-
-    await recordLog({
-      translationId,
-      ownerId,
-      category: 'processing',
-      stage: 'asset-preparation',
-      eventType: 'assets-indexed',
-      status: 'PROCESSING',
-      message: 'Assets and anchors prepared for translation',
-      metadata: {
-        assetsStored: assetContext?.assets?.length || enrichedAssets.length || 0,
-        anchorsStored: assetContext?.anchors?.length || resolvedAnchors.length || 0
-      },
-      attempt
-    });
-
-    let engine;
-    try {
-      engine = await getTranslationEngine();
-    } catch (engineErr) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to initialise translation engine', context: { error: engineErr.message }, fileName: item.originalFilename, attempt });
-      return;
-    }
-
-    const existingChunks = await listChunks(translationId, ownerId);
-    const byId = new Map();
-    for (const stored of existingChunks) {
-      if (stored?.chunkId) {
-        byId.set(stored.chunkId, stored);
-      }
-    }
-
-    const pending = [];
-    for (const chunk of document.chunks) {
-      const stored = await ensureChunkSource({ translationId, ownerId, chunk });
-      const record = stored || byId.get(chunk.id) || null;
-      if (record?.chunkId) {
-        byId.set(record.chunkId, record);
-        if (record.status !== 'COMPLETED') {
-          pending.push({ chunk, record });
-        }
-      }
-    }
-
-    const chunkSummary = summariseChunks(Array.from(byId.values()));
-    await updateTranslationItem(translationId, ownerId, {
-      totalChunks: document.chunks.length,
-      processedChunks: chunkSummary.completed,
-      failedChunks: chunkSummary.failed,
-      headHtml: document.headHtml,
-      assetCount: enrichedAssets.length
-    });
-
-    await recordLog({
-      translationId,
-      ownerId,
-      category: 'chunk-processing',
-      stage: 'queue',
-      eventType: 'chunks-queued',
-      status: 'PROCESSING',
-      message: `${pending.length} chunk(s) queued for machine translation`,
-      metadata: {
-        totalChunks: document.chunks.length,
-        pendingChunks: pending.length,
-        completedChunks: chunkSummary.completed
-      },
-      chunkProgress: {
-        completed: chunkSummary.completed,
-        failed: chunkSummary.failed,
-        total: document.chunks.length
-      },
-      attempt
-    });
-
-    let translations = [];
-    if (pending.length) {
+  const records = Array.isArray(event?.Records) ? event.Records : null;
+  if (records && records.length) {
+    for (const record of records) {
+      let payload;
       try {
-        const pendingChunks = pending.map(p => p.chunk);
-        await Promise.all(pending.map(({ record }) => updateChunkState({
-          translationId,
-          ownerId,
-          chunkOrder: record.order,
-          patch: { status: 'PROCESSING', startedAt: now() }
-        })));
-        translations = await engine.translate(pendingChunks, {
-          sourceLanguage: item.sourceLanguage || 'auto',
-          targetLanguage: item.targetLanguage || 'en'
-        });
-      } catch (translateErr) {
-        await Promise.all(pending.map(({ record }) => updateChunkState({
-          translationId,
-          ownerId,
-          chunkOrder: record.order,
-          patch: { status: 'FAILED', errorMessage: translateErr.message }
-        })));
-        await failTranslation({ translationId, ownerId, errorMessage: 'Translation provider error', context: { error: translateErr.message }, fileName: item.originalFilename, attempt });
-        return;
+        payload = JSON.parse(record.body);
+      } catch (err) {
+        console.warn('translationWorker failed to parse SQS message', { messageId: record.messageId, error: err.message });
+        continue;
       }
-
-      for (const translation of translations) {
-        const record = byId.get(translation.id) || pending.find(p => p.chunk.id === translation.id)?.record;
-        if (!record) {continue;}
-        const updated = await updateChunkState({
-          translationId,
-          ownerId,
-          chunkOrder: record.order,
-          patch: {
-            status: 'COMPLETED',
-            machineHtml: translation.translatedHtml || record.sourceHtml,
-            provider: translation.provider || engine.name,
-            model: translation.model || engine.model,
-            lastUpdatedBy: 'machine',
-            lastUpdatedAt: now(),
-            completedAt: now(),
-            errorMessage: null
-          }
-        });
-        if (updated?.chunkId) {
-          byId.set(updated.chunkId, updated);
-        }
+      try {
+        await handlePayload(payload, { messageId: record.messageId });
+      } catch (err) {
+        console.error('translationWorker handler error', { messageId: record.messageId, error: err.message });
       }
-
-      const machineSummary = summariseChunks(Array.from(byId.values()));
-      await recordLog({
-        translationId,
-        ownerId,
-        category: 'chunk-processing',
-        stage: 'machine-translation',
-        eventType: 'chunks-processed',
-        status: 'PROCESSING',
-        message: `${translations.length} chunk(s) machine-translated`,
-        metadata: {
-          provider: engine.name,
-          model: engine.model,
-          translatedChunks: translations.length
-        },
-        chunkProgress: {
-          completed: machineSummary.completed,
-          failed: machineSummary.failed,
-          total: machineSummary.total
-        },
-        attempt
-      });
     }
-
-    const finalChunks = Array.from(byId.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
-    const finalSummary = summariseChunks(finalChunks);
-
-    if (finalSummary.total === 0 || finalSummary.completed !== finalSummary.total) {
-      await updateTranslationItem(translationId, ownerId, {
-        processedChunks: finalSummary.completed,
-        failedChunks: finalSummary.failed
-      });
-      console.warn('translationWorker incomplete progress', {
-        translationId,
-        ownerId,
-        summary: finalSummary
-      });
-      return;
-    }
-
-    const normalizedChunks = finalChunks.map(chunk => ({
-      id: chunk.chunkId,
-      order: chunk.order,
-      blockId: chunk.blockId || chunk.chunkId,
-      assetAnchors: chunk.assetAnchors || [],
-      sourceHtml: chunk.sourceHtml,
-      sourceText: chunk.sourceText,
-      machineHtml: chunk.machineHtml,
-      reviewerHtml: chunk.reviewerHtml || null,
-      provider: chunk.provider || engine.name,
-      model: chunk.model || engine.model,
-      lastUpdatedBy: chunk.lastUpdatedBy || 'machine',
-      lastUpdatedAt: chunk.lastUpdatedAt || chunk.updatedAt || now(),
-      reviewerName: chunk.reviewerName || null
-    }));
-
-    const serializedAssets = assetContext.assets && assetContext.assets.length
-      ? assetContext.assets
-      : enrichedAssets.map(asset => ({
-        assetId: asset.assetId,
-        mime: asset.mime,
-        bytes: asset.bytes ?? (asset.buffer ? asset.buffer.length : 0),
-        widthPx: asset.widthPx || null,
-        heightPx: asset.heightPx || null,
-        keepOriginalLanguage: Boolean(asset.keepOriginalLanguage),
-        altText: asset.altText || '',
-        caption: asset.caption || null,
-        s3Bucket: asset.s3Bucket || null,
-        s3Key: asset.s3Key || null,
-        originalName: asset.originalName || null
-      }));
-
-    const serializedAnchors = assetContext.anchors && assetContext.anchors.length
-      ? assetContext.anchors
-      : resolvedAnchors;
-
-    const payload = {
-      translationId,
-      generatedAt: now(),
-      sourceLanguage: item.sourceLanguage,
-      targetLanguage: item.targetLanguage,
-      provider: engine.name,
-      model: engine.model,
-      headHtml: document.headHtml,
-      chunks: normalizedChunks,
-      assets: serializedAssets,
-      anchors: serializedAnchors
-    };
-
-    const chunkKey = `translations/chunks/${ownerId}/${translationId}.json`;
-    try {
-      await putObject(RAW_BUCKET, chunkKey, JSON.stringify(payload), 'application/json');
-      console.log('translationWorker chunks stored', { translationId, chunkKey, chunkCount: payload.chunks.length });
-      await recordLog({
-        translationId,
-        ownerId,
-        category: 'reassembly',
-        stage: 'chunk-persist',
-        eventType: 'chunk-payload-stored',
-        status: 'PROCESSING',
-        message: 'Chunk payload persisted to storage',
-        metadata: {
-          chunkKey,
-          chunkCount: payload.chunks.length
-        },
-        chunkProgress: {
-          completed: payload.chunks.length,
-          failed: 0,
-          total: payload.chunks.length
-        }
-      });
-    } catch (chunkErr) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to persist translation chunks', context: { chunkKey, error: chunkErr.message }, fileName: item.originalFilename, attempt });
-      return;
-    }
-
-    const machineHtml = assembleHtmlDocument({
-      headHtml: document.headHtml,
-      chunks: normalizedChunks,
-      assets: enrichedAssets,
-      anchors: resolvedAnchors
-    });
-    const machineKey = `translations/machine/${ownerId}/${translationId}.html`;
-    try {
-      await putObject(RAW_BUCKET, machineKey, machineHtml, 'text/html');
-      console.log('translationWorker machine HTML stored', { translationId, machineKey, length: machineHtml.length });
-      await recordLog({
-        translationId,
-        ownerId,
-        category: 'reassembly',
-        stage: 'machine-output',
-        eventType: 'machine-html-stored',
-        status: 'PROCESSING',
-        message: 'Machine translated HTML stored',
-        metadata: {
-          machineKey,
-          htmlLength: machineHtml.length
-        }
-      });
-    } catch (htmlErr) {
-      await failTranslation({ translationId, ownerId, errorMessage: 'Failed to persist machine translated HTML', context: { machineKey, error: htmlErr.message }, fileName: item.originalFilename, attempt });
-      return;
-    }
-
-    await updateTranslationItem(translationId, ownerId, {
-      status: 'READY_FOR_REVIEW',
-      chunkFileKey: chunkKey,
-      machineFileKey: machineKey,
-      totalChunks: normalizedChunks.length,
-      translatedAt: now(),
-      provider: engine.name,
-      model: engine.model,
-      processedChunks: normalizedChunks.length,
-      failedChunks: 0,
-      assetCount: enrichedAssets.length,
-      healthCheckRetries: 0,
-      healthCheckReason: null
-    });
-    console.log('translationWorker completed', { translationId, chunkKey, machineKey, chunkCount: normalizedChunks.length });
-    await recordLog({
-      translationId,
-      ownerId,
-      category: 'processing',
-      stage: 'complete',
-      eventType: 'processing-completed',
-      status: 'READY_FOR_REVIEW',
-      message: 'Translation processing completed',
-      metadata: {
-        chunkFileKey: chunkKey,
-        machineFileKey: machineKey,
-        chunkCount: normalizedChunks.length,
-        assetCount: enrichedAssets.length,
-        provider: engine.name,
-        model: engine.model
-      },
-      chunkProgress: {
-        completed: normalizedChunks.length,
-        failed: 0,
-        total: normalizedChunks.length
-      },
-      attempt
-    });
-    await sendJobNotification({
-      jobType: 'translation',
-      status: 'completed',
-      fileName: item.originalFilename,
-      jobId: translationId,
-      ownerId
-    });
-  } catch (error) {
-    console.error('translationWorker failed', error);
-    await failTranslation({
-      translationId,
-      ownerId,
-      errorMessage: error.message || 'Translation failed',
-      context: error.details || null,
-      fileName: item?.originalFilename
-    });
+    return;
   }
+
+  if (event?.detail) {
+    const payload = { ...event.detail, action: event.detail.action || 'start' };
+    await handlePayload(payload, { legacyEvent: true });
+    return;
+  }
+
+  console.warn('translationWorker invoked with unexpected event shape', { event });
 };

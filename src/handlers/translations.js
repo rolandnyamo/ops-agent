@@ -1,7 +1,7 @@
 const { DynamoDBClient, QueryCommand, GetItemCommand, PutItemCommand, UpdateItemCommand, DeleteItemCommand } = require('@aws-sdk/client-dynamodb');
 const { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { EventBridgeClient, PutEventsCommand } = require('@aws-sdk/client-eventbridge');
+const { SQSClient, SendMessageCommand } = require('@aws-sdk/client-sqs');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const HtmlDocx = require('html-docx-js');
 const crypto = require('node:crypto');
@@ -14,10 +14,11 @@ const { restartTranslation: publishTranslationRestart } = require('./helpers/job
 
 const ddb = new DynamoDBClient({});
 const s3 = new S3Client({});
-const eb = new EventBridgeClient({});
+const sqs = new SQSClient({});
 
 const DOCS_TABLE = process.env.DOCS_TABLE;
 const RAW_BUCKET = process.env.RAW_BUCKET;
+const TRANSLATION_QUEUE_URL = process.env.TRANSLATION_QUEUE_URL;
 
 function now() {
   return new Date().toISOString();
@@ -164,6 +165,9 @@ async function createTranslation(body, eventOwner, requester) {
   if (!DOCS_TABLE) {
     throw new Error('DOCS_TABLE not configured');
   }
+  if (!TRANSLATION_QUEUE_URL) {
+    throw new Error('TRANSLATION_QUEUE_URL not configured');
+  }
   const ownerId = body.ownerId || eventOwner || 'default';
   const translationId = body.translationId || crypto.randomUUID();
   const sourceLanguage = body.sourceLanguage || 'fr';
@@ -197,12 +201,13 @@ async function createTranslation(body, eventOwner, requester) {
   await ddb.send(new PutItemCommand({ TableName: DOCS_TABLE, Item: marshall(item) }));
   console.log('translation created', { translationId, ownerId, originalFileKey: fileKey });
 
-  await eb.send(new PutEventsCommand({
-    Entries: [{
-      Source: 'ops-agent',
-      DetailType: 'TranslationRequested',
-      Detail: JSON.stringify({ translationId, ownerId })
-    }]
+  await sqs.send(new SendMessageCommand({
+    QueueUrl: TRANSLATION_QUEUE_URL,
+    MessageBody: JSON.stringify({
+      action: 'start',
+      translationId,
+      ownerId
+    })
   }));
 
   await sendJobNotification({

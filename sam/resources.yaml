@@ -437,6 +437,7 @@ Resources:
           TRANSLATION_MODEL: gpt-4o-mini
           SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
           SES_SENDER: !Ref SesSenderEmail
+          TRANSLATION_QUEUE_URL: !Ref TranslationWorkerQueue
       Policies:
         - Statement:
             - Effect: Allow
@@ -455,8 +456,9 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - events:PutEvents
-              Resource: '*'
+                - sqs:SendMessage
+                - sqs:SendMessageBatch
+              Resource: !GetAtt TranslationWorkerQueue.Arn
         - Statement:
             - Effect: Allow
               Action:
@@ -543,6 +545,12 @@ Resources:
             Path: /translations/{translationId}/logs
             Method: OPTIONS
 
+  TranslationWorkerQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${ProjectName}-${Stage}-translation-worker"
+      VisibilityTimeout: 300
+
   TranslationWorkerFn:
     Type: AWS::Serverless::Function
     Properties:
@@ -559,6 +567,7 @@ Resources:
           TRANSLATION_MODEL: gpt-4o-mini
           SETTINGS_TABLE: !ImportValue { 'Fn::Sub': '${ProjectName}-${Stage}-SettingsTableName' }
           SES_SENDER: !Ref SesSenderEmail
+          TRANSLATION_QUEUE_URL: !Ref TranslationWorkerQueue
       Policies:
         - Statement:
             - Effect: Allow
@@ -570,6 +579,12 @@ Resources:
               Action:
                 - s3:*
               Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+                - sqs:SendMessageBatch
+              Resource: !GetAtt TranslationWorkerQueue.Arn
         - Statement:
             - Effect: Allow
               Action:
@@ -586,25 +601,13 @@ Resources:
                 - ses:SendEmail
                 - ses:SendRawEmail
               Resource: '*'
-
-  TranslationEventRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub "${ProjectName}-${Stage}-translation-requested"
-      EventPattern:
-        source: ["ops-agent"]
-        detail-type: ["TranslationRequested"]
-      Targets:
-        - Arn: !GetAtt TranslationWorkerFn.Arn
-          Id: TranslationWorkerTarget
-
-  TranslationWorkerPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref TranslationWorkerFn
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt TranslationEventRule.Arn
+      Events:
+        TranslationQueue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TranslationWorkerQueue.Arn
+            BatchSize: 5
+            Enabled: true
 
   JobHealthCheckFn:
     Type: AWS::Serverless::Function
@@ -622,6 +625,7 @@ Resources:
           INGEST_WORKER_FUNCTION_NAME: !Sub "${ProjectName}-${Stage}-ingest-worker"
           JOB_HEALTH_STALE_MINUTES: '15'
           JOB_HEALTH_MAX_RETRIES: '3'
+          TRANSLATION_QUEUE_URL: !Ref TranslationWorkerQueue
       Policies:
         - Statement:
             - Effect: Allow
@@ -631,8 +635,9 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
-                - events:PutEvents
-              Resource: '*'
+                - sqs:SendMessage
+                - sqs:SendMessageBatch
+              Resource: !GetAtt TranslationWorkerQueue.Arn
         - Statement:
             - Effect: Allow
               Action:

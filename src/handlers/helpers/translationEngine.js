@@ -120,22 +120,30 @@ function createOpenAIEngine() {
   return {
     name: 'openai',
     model,
+    async translateChunk(chunk, { sourceLanguage, targetLanguage, attempt = 0 }) {
+      if (!chunk) {
+        throw new TranslationError('Chunk payload missing');
+      }
+      const translatedHtml = await translateChunkOpenAI({
+        html: chunk.sourceHtml,
+        sourceLanguage,
+        targetLanguage,
+        model,
+        attempt
+      });
+      return {
+        id: chunk.id || chunk.chunkId,
+        order: chunk.order,
+        translatedHtml,
+        provider: 'openai',
+        model
+      };
+    },
     async translate(chunks, { sourceLanguage, targetLanguage }) {
       const results = [];
       for (const chunk of chunks) {
-        const translatedHtml = await translateChunkOpenAI({
-          html: chunk.sourceHtml,
-          sourceLanguage,
-          targetLanguage,
-          model
-        });
-        results.push({
-          id: chunk.id,
-          order: chunk.order,
-          translatedHtml,
-          provider: 'openai',
-          model
-        });
+        const result = await this.translateChunk(chunk, { sourceLanguage, targetLanguage });
+        results.push(result);
       }
       return results;
     }

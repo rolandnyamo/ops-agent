@@ -1,4 +1,4 @@
-const { DynamoDBClient, QueryCommand, UpdateItemCommand, BatchWriteItemCommand } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBClient, QueryCommand, UpdateItemCommand, BatchWriteItemCommand, GetItemCommand } = require('@aws-sdk/client-dynamodb');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 
 const ddb = new DynamoDBClient({});
@@ -41,6 +41,19 @@ async function listChunks(translationId, ownerId) {
   };
   const res = await ddb.send(new QueryCommand(params));
   return (res.Items || []).map(item => unmarshall(item));
+}
+
+async function getChunk(translationId, ownerId, chunkOrder) {
+  if (!DOCS_TABLE || typeof chunkOrder === 'undefined' || chunkOrder === null) return null;
+  const params = {
+    TableName: DOCS_TABLE,
+    Key: marshall({
+      PK: `TRANSLATION#${translationId}`,
+      SK: chunkSortKey(chunkOrder)
+    })
+  };
+  const res = await ddb.send(new GetItemCommand(params));
+  return res.Item ? unmarshall(res.Item) : null;
 }
 
 async function ensureChunkSource({ translationId, ownerId = 'default', chunk }) {
@@ -134,6 +147,7 @@ function summariseChunks(chunks = []) {
 
 module.exports = {
   listChunks,
+  getChunk,
   ensureChunkSource,
   updateChunkState,
   deleteAllChunks,
