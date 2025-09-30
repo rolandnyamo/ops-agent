@@ -157,7 +157,7 @@ export default function Users() {
   }
 
   function getUserPreferences(user: User): NotificationPreferences {
-    const base = user.notifications?.preferences || {};
+    const base: Partial<NotificationPreferences> = user.notifications?.preferences || {};
     return {
       translation: { ...DEFAULT_NOTIFICATION_PREFS.translation, ...(base.translation || {}) },
       documentation: { ...DEFAULT_NOTIFICATION_PREFS.documentation, ...(base.documentation || {}) }
