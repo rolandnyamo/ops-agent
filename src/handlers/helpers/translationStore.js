@@ -270,7 +270,7 @@ async function updateChunkState({ translationId, ownerId = 'default', chunkOrder
     throw new Error('translationId is required for updateChunkState');
   }
   const key = chunkPrimaryKey(translationId, ownerId, chunkOrder);
-  const names = { '#updatedAt': 'updatedAt', '#dataKey': 'dataKey', '#machineHtml': 'machineHtml', '#reviewerHtml': 'reviewerHtml', '#sourceHtml': 'sourceHtml', '#sourceText': 'sourceText' };
+  const names = { '#updatedAt': 'updatedAt', '#dataKey': 'dataKey' };
   const sets = ['#updatedAt = :updatedAt', '#dataKey = if_not_exists(#dataKey, :dataKey)'];
   const values = { ':updatedAt': now(), ':dataKey': chunkDataKey(translationId, ownerId, chunkId) };
 
@@ -291,6 +291,11 @@ async function updateChunkState({ translationId, ownerId = 'default', chunkOrder
     names[`#${field}`] = field;
     values[`:${field}`] = value;
     sets.push(`#${field} = :${field}`);
+  }
+
+  // Add expression attribute names for fields we're removing
+  for (const field of removeFields) {
+    names[`#${field}`] = field;
   }
 
   let mergedData = null;
