@@ -102,6 +102,94 @@ function parsePdfSpans(html) {
   }
 }
 
+async function requestPdfTranslationMap({ entries, sourceLanguage, targetLanguage, model, attempt = 0 }, openai, useSchema = false) {
+  const instructionList = entries
+    .map(entry => `${entry.id}: ${entry.text.replace(/\s+/g, ' ').trim()}`)
+    .join('\n');
+
+  const systemPrompt = `You are a professional translator. Translate each provided PDF text segment from ${sourceLanguage} to ${targetLanguage}. Keep punctuation and spacing, but translate the human-readable text. Return JSON ONLY with an array named segments: [{"id":"span_1","text":"..."}, ...], matching every id exactly and preserving order.`;
+  const correctivePrompt = attempt > 0
+    ? 'Reminder: output must be JSON only, no prose, matching every id. Do not omit items.'
+    : 'Do not add commentary. Do not merge ids. Simply translate each text value.';
+
+  const payload = {
+    model,
+    input: [
+      { role: 'system', content: [{ type: 'input_text', text: systemPrompt }] },
+      { role: 'user', content: [{ type: 'input_text', text: `${correctivePrompt}\n\n${instructionList}` }] }
+    ],
+    max_output_tokens: 4096,
+    temperature: 0.2
+  };
+
+  if (useSchema) {
+    payload.response_format = {
+      type: 'json_schema',
+      json_schema: {
+        name: 'pdf_translation',
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            segments: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['id', 'text'],
+                properties: {
+                  id: { type: 'string' },
+                  text: { type: 'string' }
+                }
+              }
+            }
+          },
+          required: ['segments']
+        }
+      }
+    };
+  }
+
+  const resp = await openai.responses.create(payload);
+  const raw = useSchema && resp?.output?.[0]?.content?.[0]?.text
+    ? resp.output[0].content[0].text
+    : stripWrapperTags(resp.output_text || '');
+  if (!raw) {
+    throw new TranslationError('Empty translation output for PDF snippet');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new TranslationError('Failed to parse PDF translation JSON', { raw, cause: err });
+  }
+
+  const segments = Array.isArray(parsed) ? parsed : parsed?.segments;
+  if (!Array.isArray(segments)) {
+    throw new TranslationError('PDF translation JSON missing segments array', { raw });
+  }
+  return segments;
+}
+
+async function translateSinglePdfSpan({ text, sourceLanguage, targetLanguage, model }, openai) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  const resp = await openai.responses.create({
+    model,
+    input: [
+      { role: 'system', content: [{ type: 'input_text', text: `Translate the following text from ${sourceLanguage} to ${targetLanguage}. Return only the translated text.` }] },
+      { role: 'user', content: [{ type: 'input_text', text: trimmed }] }
+    ],
+    max_output_tokens: 512,
+    temperature: 0.2
+  });
+  const out = stripWrapperTags(resp.output_text || '').trim();
+  return out || trimmed;
+}
+
 async function translatePdfHtml({ html, sourceLanguage, targetLanguage, model, attempt = 0 }, openai) {
   const parsed = parsePdfSpans(html);
   if (!parsed) {
@@ -112,47 +200,43 @@ async function translatePdfHtml({ html, sourceLanguage, targetLanguage, model, a
     return html;
   }
 
-  const instructionList = entries
-    .map(entry => `${entry.id}: ${entry.text.replace(/\s+/g, ' ').trim()}`)
-    .join('\n');
-
-  const systemPrompt = `You are a professional translator. Translate each provided PDF text segment from ${sourceLanguage} to ${targetLanguage}. Keep punctuation and spacing, but translate the human-readable text. Return valid JSON ONLY as an array of objects [{"id":"span_1","text":"TRANSLATION"}, ...] matching every id exactly and preserving order.`;
-  const correctivePrompt = attempt > 0
-    ? 'Reminder: output must be JSON only, no prose, matching every id. Do not omit items.'
-    : 'Do not add commentary. Do not merge ids. Simply translate each text value.';
-
-  const resp = await openai.responses.create({
-    model,
-    input: [
-      { role: 'system', content: [{ type: 'input_text', text: systemPrompt }] },
-      { role: 'user', content: [{ type: 'input_text', text: `${correctivePrompt}\n\n${instructionList}` }] }
-    ],
-    max_output_tokens: 4096,
-    temperature: 0.2
-  });
-
-  let out = stripWrapperTags(resp.output_text || '');
-  if (!out) {
-    throw new TranslationError('Empty translation output for PDF snippet');
-  }
-
-  let parsedJson;
-  try {
-    parsedJson = JSON.parse(out);
-  } catch (err) {
-    throw new TranslationError('Failed to parse PDF translation JSON', { raw: out, cause: err });
-  }
-
-  if (!Array.isArray(parsedJson) || parsedJson.length !== entries.length) {
-    throw new TranslationError('PDF translation JSON missing entries', { expected: entries.length, received: parsedJson.length });
-  }
-
-  const byId = new Map(parsedJson.map(item => [item?.id, item?.text]));
-  for (const entry of entries) {
-    if (!byId.has(entry.id)) {
-      throw new TranslationError(`PDF translation JSON missing id ${entry.id}`);
+  let segments;
+  let lastErr;
+  for (let phase = 0; phase < 2; phase++) {
+    try {
+      segments = await requestPdfTranslationMap({ entries, sourceLanguage, targetLanguage, model, attempt }, openai, phase === 1);
+      if (segments.length !== entries.length) {
+        throw new TranslationError('PDF translation JSON missing entries', { expected: entries.length, received: segments.length });
+      }
+      break;
+    } catch (err) {
+      lastErr = err;
+      segments = null;
     }
-    const translated = String(byId.get(entry.id) ?? '').trim();
+  }
+
+  if (!segments) {
+    console.warn('translatePdfHtml: falling back to per-span translation', lastErr?.message || lastErr);
+    for (const entry of entries) {
+      try {
+        const translated = await translateSinglePdfSpan({
+          text: entry.text,
+          sourceLanguage,
+          targetLanguage,
+          model
+        }, openai);
+        entry.span.set_content(escapeHtml(translated));
+      } catch (spanErr) {
+        console.warn('translatePdfHtml: span translation fallback failed', spanErr?.message || spanErr);
+        entry.span.set_content(escapeHtml(entry.text));
+      }
+    }
+    return parsed.root.toString();
+  }
+
+  const byId = new Map(segments.map(item => [item?.id, item?.text]));
+  for (const entry of entries) {
+    const translated = String(byId.get(entry.id) ?? entry.text ?? '').trim();
     entry.span.set_content(escapeHtml(translated));
   }
 
