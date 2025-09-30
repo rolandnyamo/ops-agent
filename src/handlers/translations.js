@@ -71,6 +71,11 @@ function actorFrom(reviewer, role = 'user') {
   };
 }
 
+function actorLabel(actor) {
+  if (!actor) return null;
+  return actor.email || actor.name || actor.sub || actor.role || actor.type || null;
+}
+
 async function recordLog(entry) {
   try {
     await appendJobLog({
@@ -677,12 +682,135 @@ exports.handler = async (event, context, callback) => {
     
     console.log('extracted translationId', { translationId });
 
+    if (method === 'POST' && path.endsWith('/pause')) {
+      const item = await getTranslation(translationId, ownerId);
+      if (!item) {
+        return ok(404, { message: 'Translation not found' }, callback);
+      }
+      if (item.status === 'PAUSED') {
+        return ok(200, { message: 'Translation already paused', status: item.status }, callback);
+      }
+      if (item.status === 'PAUSE_REQUESTED') {
+        return ok(202, { message: 'Pause request already in progress' }, callback);
+      }
+      if (item.status !== 'PROCESSING') {
+        return ok(409, { message: 'Translation cannot be paused from the current state' }, callback);
+      }
+      const actor = actorFrom(reviewer, 'admin');
+      const patch = {
+        status: 'PAUSE_REQUESTED',
+        pauseRequestedAt: now(),
+        pauseRequestedBy: actorLabel(actor),
+        pauseRequestedByEmail: actor.email || null,
+        pauseRequestedBySub: actor.sub || null
+      };
+      await updateTranslation(translationId, ownerId, patch);
+      await recordLog({
+        translationId,
+        ownerId,
+        category: 'processing-control',
+        stage: 'pause',
+        eventType: 'pause-requested',
+        status: 'PAUSE_REQUESTED',
+        message: 'Pause requested by administrator',
+        actor
+      });
+      return ok(202, { message: 'Pause requested' }, callback);
+    }
+
+    if (method === 'POST' && path.endsWith('/resume')) {
+      const item = await getTranslation(translationId, ownerId);
+      if (!item) {
+        return ok(404, { message: 'Translation not found' }, callback);
+      }
+      if (!['PAUSED', 'PAUSE_REQUESTED'].includes(item.status)) {
+        return ok(409, { message: 'Translation cannot be resumed from the current state' }, callback);
+      }
+      const actor = actorFrom(reviewer, 'admin');
+      const patch = {
+        status: 'PROCESSING',
+        resumedAt: now(),
+        resumedBy: actorLabel(actor),
+        resumedByEmail: actor.email || null,
+        resumedBySub: actor.sub || null,
+        pauseRequestedAt: null,
+        pauseRequestedBy: null,
+        pauseRequestedByEmail: null,
+        pauseRequestedBySub: null,
+        pausedAt: null,
+        pausedBy: null,
+        pausedByEmail: null,
+        pausedBySub: null,
+        healthCheckRetries: 0,
+        healthCheckReason: null
+      };
+      await updateTranslation(translationId, ownerId, patch);
+      await recordLog({
+        translationId,
+        ownerId,
+        category: 'processing-control',
+        stage: 'resume',
+        eventType: 'resume-requested',
+        status: 'PROCESSING',
+        message: 'Resume requested by administrator',
+        actor
+      });
+      await publishTranslationRestart(translationId, ownerId);
+      await sendJobNotification({
+        jobType: 'translation',
+        status: 'resumed',
+        fileName: item.originalFilename || item.title || item.translationId,
+        jobId: translationId,
+        ownerId
+      });
+      return ok(202, { message: 'Resume requested' }, callback);
+    }
+
+    if (method === 'POST' && (path.endsWith('/stop') || path.endsWith('/cancel'))) {
+      const item = await getTranslation(translationId, ownerId);
+      if (!item) {
+        return ok(404, { message: 'Translation not found' }, callback);
+      }
+      if (item.status === 'CANCELLED') {
+        return ok(200, { message: 'Translation already cancelled' }, callback);
+      }
+      if (item.status === 'CANCEL_REQUESTED') {
+        return ok(202, { message: 'Cancellation already requested' }, callback);
+      }
+      if (!['PROCESSING', 'PAUSE_REQUESTED', 'PAUSED'].includes(item.status)) {
+        return ok(409, { message: 'Translation cannot be cancelled from the current state' }, callback);
+      }
+      const actor = actorFrom(reviewer, 'admin');
+      const body = parseBody(event);
+      const patch = {
+        status: 'CANCEL_REQUESTED',
+        cancelRequestedAt: now(),
+        cancelRequestedBy: actorLabel(actor),
+        cancelRequestedByEmail: actor.email || null,
+        cancelRequestedBySub: actor.sub || null,
+        cancelReason: body?.reason || null
+      };
+      await updateTranslation(translationId, ownerId, patch);
+      await recordLog({
+        translationId,
+        ownerId,
+        category: 'processing-control',
+        stage: 'cancel',
+        eventType: 'cancel-requested',
+        status: 'CANCEL_REQUESTED',
+        message: body?.reason ? `Cancellation requested: ${body.reason}` : 'Cancellation requested by administrator',
+        actor
+      });
+      await publishTranslationRestart(translationId, ownerId);
+      return ok(202, { message: 'Cancellation requested' }, callback);
+    }
+
     if (method === 'POST' && path.endsWith('/restart')) {
       const item = await getTranslation(translationId, ownerId);
       if (!item) {
         return ok(404, { message: 'Translation not found' }, callback);
       }
-      if (!['FAILED', 'PROCESSING'].includes(item.status)) {
+      if (!['FAILED', 'PROCESSING', 'CANCELLED'].includes(item.status)) {
         return ok(409, { message: 'Translation cannot be restarted from the current state' }, callback);
       }
       await updateTranslation(translationId, ownerId, {
@@ -691,7 +819,12 @@ exports.handler = async (event, context, callback) => {
         errorContext: null,
         restartedAt: now(),
         healthCheckRetries: 0,
-        healthCheckReason: null
+        healthCheckReason: null,
+        cancelRequestedAt: null,
+        cancelRequestedBy: null,
+        cancelRequestedByEmail: null,
+        cancelRequestedBySub: null,
+        cancelReason: null
       });
       await recordLog({
         translationId,

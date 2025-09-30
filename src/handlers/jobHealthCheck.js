@@ -1,4 +1,5 @@
 const { DynamoDBClient, UpdateItemCommand } = require('@aws-sdk/client-dynamodb');
+const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 const {
   scanTranslations,
@@ -11,15 +12,27 @@ const {
   sendJobNotification
 } = require('./helpers/jobMonitor');
 const { appendJobLog } = require('./helpers/jobLogs');
+const { deleteAllChunks } = require('./helpers/translationStore');
 
 const ddb = new DynamoDBClient({});
+const s3 = new S3Client({});
 
 const DOCS_TABLE = process.env.DOCS_TABLE;
 const STALE_MINUTES = Number(process.env.JOB_HEALTH_STALE_MINUTES || 15);
 const RETRY_LIMIT = Number(process.env.JOB_HEALTH_MAX_RETRIES || 3);
+const RAW_BUCKET = process.env.RAW_BUCKET;
 
 function now() {
   return new Date().toISOString();
+}
+
+async function deleteObject(key) {
+  if (!RAW_BUCKET || !key) return;
+  try {
+    await s3.send(new DeleteObjectCommand({ Bucket: RAW_BUCKET, Key: key }));
+  } catch (err) {
+    console.warn('jobHealthCheck failed to delete object', { key, error: err?.message || err });
+  }
 }
 
 async function incrementTranslationRetry(translationId, ownerId, reason) {
@@ -94,6 +107,55 @@ async function markDocFailed(doc, reason) {
   });
 }
 
+async function cleanupCancelledTranslationRecord(translation) {
+  if (!DOCS_TABLE || !translation) return false;
+  if (translation.cancelCleanupAt) return false;
+  const translationId = translation.translationId;
+  const ownerId = translation.ownerId || 'default';
+  const keys = Array.from(new Set([
+    translation.chunkFileKey,
+    translation.machineFileKey,
+    translation.translatedFileKey,
+    translation.translatedHtmlKey,
+    `translations/chunks/${ownerId}/${translationId}.json`,
+    `translations/machine/${ownerId}/${translationId}.html`,
+    `translations/output/${ownerId}/${translationId}.html`,
+    `translations/output/${ownerId}/${translationId}.docx`
+  ].filter(Boolean)));
+  if (keys.length) {
+    await Promise.all(keys.map(deleteObject));
+  }
+  await deleteAllChunks(translationId, ownerId);
+  await ddb.send(new UpdateItemCommand({
+    TableName: DOCS_TABLE,
+    Key: marshall({ PK: `TRANSLATION#${translationId}`, SK: `TRANSLATION#${ownerId}` }),
+    UpdateExpression: 'SET #updatedAt = :now, #cleanupAt = :now REMOVE #chunkFileKey, #machineFileKey, #translatedFileKey, #translatedHtmlKey',
+    ExpressionAttributeNames: {
+      '#updatedAt': 'updatedAt',
+      '#chunkFileKey': 'chunkFileKey',
+      '#machineFileKey': 'machineFileKey',
+      '#translatedFileKey': 'translatedFileKey',
+      '#translatedHtmlKey': 'translatedHtmlKey',
+      '#cleanupAt': 'cancelCleanupAt'
+    },
+    ExpressionAttributeValues: marshall({
+      ':now': now()
+    })
+  }));
+  await appendJobLog({
+    jobType: 'translation',
+    jobId: translationId,
+    ownerId,
+    category: 'processing-control',
+    stage: 'cancel-cleanup',
+    eventType: 'cancelled-cleanup',
+    status: 'CANCELLED',
+    message: 'Cancelled translation artifacts cleaned by health monitor',
+    actor: { type: 'system', source: 'health-check', role: 'system' }
+  });
+  return true;
+}
+
 async function recordRestartLog(translationId, ownerId, reason) {
   try {
     await appendJobLog({
@@ -118,6 +180,7 @@ exports.handler = async () => {
     translationsChecked: 0,
     translationsRestarted: 0,
     translationsFailed: 0,
+    translationsCancelledCleaned: 0,
     docsChecked: 0,
     docsRestarted: 0,
     docsFailed: 0
@@ -159,6 +222,14 @@ exports.handler = async () => {
     await restartTranslation(report.translationId, report.ownerId);
     await recordRestartLog(report.translationId, report.ownerId, reason);
     result.translationsRestarted += 1;
+  }
+
+  const cancelledTranslations = await scanTranslations('CANCELLED');
+  for (const translation of cancelledTranslations) {
+    const cleaned = await cleanupCancelledTranslationRecord(translation);
+    if (cleaned) {
+      result.translationsCancelledCleaned += 1;
+    }
   }
 
   const docs = await scanDocs('PROCESSING');
