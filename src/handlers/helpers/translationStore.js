@@ -1,12 +1,18 @@
-const { DynamoDBClient, QueryCommand, UpdateItemCommand, BatchWriteItemCommand, GetItemCommand } = require('@aws-sdk/client-dynamodb');
+const { DynamoDBClient, QueryCommand, UpdateItemCommand, BatchWriteItemCommand } = require('@aws-sdk/client-dynamodb');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { marshall, unmarshall } = require('@aws-sdk/util-dynamodb');
 
 const ddb = new DynamoDBClient({});
+const s3 = new S3Client({});
 
 const DOCS_TABLE = process.env.DOCS_TABLE;
+const RAW_BUCKET = process.env.RAW_BUCKET;
 
 if (!DOCS_TABLE) {
   console.warn('translationStore initialised without DOCS_TABLE environment variable');
+}
+if (!RAW_BUCKET) {
+  console.warn('translationStore initialised without RAW_BUCKET environment variable');
 }
 
 function now() {
@@ -25,7 +31,58 @@ function chunkPrimaryKey(translationId, ownerId, order) {
   };
 }
 
-async function listChunks(translationId, ownerId) {
+function chunkDataKey(translationId, ownerId, chunkId) {
+  const safeChunkId = encodeURIComponent(chunkId || 'unknown');
+  return `translations/chunk-data/${ownerId}/${translationId}/${safeChunkId}.json`;
+}
+
+async function putChunkData({ translationId, ownerId, chunkId, dataKey, data }) {
+  if (!RAW_BUCKET || !chunkId) return null;
+  const key = dataKey || chunkDataKey(translationId, ownerId, chunkId);
+  const body = JSON.stringify({
+    chunkId,
+    translationId,
+    ownerId,
+    ...data
+  });
+  await s3.send(new PutObjectCommand({
+    Bucket: RAW_BUCKET,
+    Key: key,
+    Body: body,
+    ContentType: 'application/json'
+  }));
+  return { key };
+}
+
+async function getChunkData({ translationId, ownerId, chunkId, dataKey }) {
+  if (!RAW_BUCKET || !chunkId) return {};
+  const key = dataKey || chunkDataKey(translationId, ownerId, chunkId);
+  try {
+    const res = await s3.send(new GetObjectCommand({ Bucket: RAW_BUCKET, Key: key }));
+    const text = await res.Body.transformToString();
+    if (!text) return {};
+    return JSON.parse(text);
+  } catch (err) {
+    if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) {
+      return {};
+    }
+    console.warn('failed to read chunk data', { translationId, ownerId, chunkId, error: err?.message || err });
+    return {};
+  }
+}
+
+async function deleteChunkData({ translationId, ownerId, chunkId, dataKey }) {
+  if (!RAW_BUCKET || !chunkId) return;
+  const key = dataKey || chunkDataKey(translationId, ownerId, chunkId);
+  try {
+    await s3.send(new DeleteObjectCommand({ Bucket: RAW_BUCKET, Key: key }));
+  } catch (err) {
+    if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) return;
+    console.warn('failed to delete chunk data', { translationId, ownerId, chunkId, error: err?.message || err });
+  }
+}
+
+async function queryChunkItems(translationId, ownerId) {
   if (!DOCS_TABLE) return [];
   const params = {
     TableName: DOCS_TABLE,
@@ -43,81 +100,180 @@ async function listChunks(translationId, ownerId) {
   return (res.Items || []).map(item => unmarshall(item));
 }
 
-async function getChunk(translationId, ownerId, chunkOrder) {
-  if (!DOCS_TABLE || typeof chunkOrder === 'undefined' || chunkOrder === null) return null;
-  const params = {
-    TableName: DOCS_TABLE,
-    Key: marshall({
-      PK: `TRANSLATION#${translationId}`,
-      SK: chunkSortKey(chunkOrder)
-    })
-  };
-  const res = await ddb.send(new GetItemCommand(params));
-  return res.Item ? unmarshall(res.Item) : null;
+async function listChunks(translationId, ownerId) {
+  const items = await queryChunkItems(translationId, ownerId);
+  if (!items.length) return [];
+  const results = await Promise.all(items.map(async item => {
+    if (!RAW_BUCKET) {
+      return item;
+    }
+    const hasInlineData = ['sourceHtml', 'machineHtml', 'reviewerHtml'].some(field => Object.prototype.hasOwnProperty.call(item, field));
+    if (hasInlineData) {
+      return item;
+    }
+    const data = await getChunkData({
+      translationId,
+      ownerId,
+      chunkId: item.chunkId,
+      dataKey: item.dataKey
+    });
+    return {
+      ...item,
+      ...data
+    };
+  }));
+  return results;
 }
 
 async function ensureChunkSource({ translationId, ownerId = 'default', chunk }) {
   if (!DOCS_TABLE || !chunk) return;
+  const chunkId = chunk.id || chunk.chunkId;
+  if (!chunkId) {
+    throw new Error('Chunk is missing chunkId');
+  }
   const key = chunkPrimaryKey(translationId, ownerId, chunk.order);
+  const dataKey = chunkDataKey(translationId, ownerId, chunkId);
+  const existingData = RAW_BUCKET
+    ? await getChunkData({ translationId, ownerId, chunkId, dataKey })
+    : {};
+  const nextData = {
+    ...existingData,
+    chunkId,
+    sourceHtml: chunk.sourceHtml || existingData?.sourceHtml || '',
+    sourceText: chunk.sourceText || existingData?.sourceText || '',
+    machineHtml: existingData.machineHtml || null,
+    reviewerHtml: existingData.reviewerHtml || null
+  };
+  if (RAW_BUCKET) {
+    await putChunkData({ translationId, ownerId, chunkId, dataKey, data: nextData });
+  }
+
   const names = {
     '#updatedAt': 'updatedAt',
     '#chunkId': 'chunkId',
     '#order': 'order',
     '#status': 'status',
-    '#sourceHtml': 'sourceHtml',
-    '#sourceText': 'sourceText',
     '#createdAt': 'createdAt',
     '#blockId': 'blockId',
-    '#assetAnchors': 'assetAnchors'
+    '#assetAnchors': 'assetAnchors',
+    '#dataKey': 'dataKey',
+    '#sourceHtml': 'sourceHtml',
+    '#sourceText': 'sourceText',
+    '#machineHtml': 'machineHtml',
+    '#reviewerHtml': 'reviewerHtml'
   };
   const values = marshall({
     ':updatedAt': now(),
-    ':chunkId': chunk.id,
+    ':chunkId': chunkId,
     ':order': chunk.order,
     ':status': 'PENDING',
-    ':sourceHtml': chunk.sourceHtml || '',
-    ':sourceText': chunk.sourceText || '',
     ':createdAt': now(),
-    ':blockId': chunk.blockId || chunk.id,
-    ':assetAnchors': chunk.anchorIds || []
+    ':blockId': chunk.blockId || chunkId,
+    ':assetAnchors': chunk.anchorIds || [],
+    ':dataKey': dataKey
   });
-  const res = await ddb.send(new UpdateItemCommand({
-    TableName: DOCS_TABLE,
-    Key: marshall(key),
-    UpdateExpression: 'SET #updatedAt = :updatedAt, #chunkId = :chunkId, #order = :order, #sourceHtml = :sourceHtml, #sourceText = :sourceText, #blockId = :blockId, #assetAnchors = :assetAnchors, #status = if_not_exists(#status, :status), #createdAt = if_not_exists(#createdAt, :createdAt)',
-    ExpressionAttributeNames: names,
-    ExpressionAttributeValues: values,
-    ReturnValues: 'ALL_NEW'
-  }));
-  return res.Attributes ? unmarshall(res.Attributes) : undefined;
-}
-
-async function updateChunkState({ translationId, ownerId = 'default', chunkOrder, patch }) {
-  if (!DOCS_TABLE || !patch || typeof chunkOrder === 'undefined') return;
-  const key = chunkPrimaryKey(translationId, ownerId, chunkOrder);
-  const names = { '#updatedAt': 'updatedAt' };
-  const sets = ['#updatedAt = :updatedAt'];
-  const values = { ':updatedAt': now() };
-  for (const [field, value] of Object.entries(patch)) {
-    names[`#${field}`] = field;
-    values[`:${field}`] = value;
-    sets.push(`#${field} = :${field}`);
+  const updateExpression = 'SET #updatedAt = :updatedAt, #chunkId = :chunkId, #order = :order, #blockId = :blockId, #assetAnchors = :assetAnchors, #status = if_not_exists(#status, :status), #createdAt = if_not_exists(#createdAt, :createdAt), #dataKey = :dataKey';
+  const removeExpression = 'REMOVE #sourceHtml, #sourceText, #machineHtml, #reviewerHtml';
+  let expression = updateExpression;
+  if (RAW_BUCKET) {
+    expression = `${updateExpression} ${removeExpression}`;
   }
   const res = await ddb.send(new UpdateItemCommand({
     TableName: DOCS_TABLE,
     Key: marshall(key),
-    UpdateExpression: `SET ${sets.join(', ')}`,
+    UpdateExpression: expression,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
+    ReturnValues: 'ALL_NEW'
+  }));
+  const attributes = res.Attributes ? unmarshall(res.Attributes) : undefined;
+  if (!attributes) return undefined;
+  if (!RAW_BUCKET) return attributes;
+  return {
+    ...attributes,
+    ...nextData,
+    dataKey
+  };
+}
+
+async function updateChunkState({ translationId, ownerId = 'default', chunkOrder, chunkId, patch }) {
+  if (!DOCS_TABLE || !patch || typeof chunkOrder === 'undefined') return;
+  if (!chunkId) {
+    throw new Error('updateChunkState requires chunkId');
+  }
+  const key = chunkPrimaryKey(translationId, ownerId, chunkOrder);
+  const names = { '#updatedAt': 'updatedAt', '#dataKey': 'dataKey', '#machineHtml': 'machineHtml', '#reviewerHtml': 'reviewerHtml', '#sourceHtml': 'sourceHtml', '#sourceText': 'sourceText' };
+  const sets = ['#updatedAt = :updatedAt', '#dataKey = if_not_exists(#dataKey, :dataKey)'];
+  const values = { ':updatedAt': now(), ':dataKey': chunkDataKey(translationId, ownerId, chunkId) };
+
+  const largeFields = new Set(['sourceHtml', 'sourceText', 'machineHtml', 'reviewerHtml']);
+  const removeFields = new Set();
+  const ddbPatch = {};
+  const s3Patch = {};
+  for (const [field, value] of Object.entries(patch)) {
+    if (RAW_BUCKET && largeFields.has(field)) {
+      s3Patch[field] = value;
+      removeFields.add(field);
+      continue;
+    }
+    ddbPatch[field] = value;
+  }
+
+  for (const [field, value] of Object.entries(ddbPatch)) {
+    names[`#${field}`] = field;
+    values[`:${field}`] = value;
+    sets.push(`#${field} = :${field}`);
+  }
+
+  let mergedData = null;
+  if (RAW_BUCKET && Object.keys(s3Patch).length) {
+    const existing = await getChunkData({ translationId, ownerId, chunkId, dataKey: values[':dataKey'] });
+    mergedData = {
+      ...existing,
+      chunkId,
+      ...s3Patch
+    };
+    await putChunkData({ translationId, ownerId, chunkId, dataKey: values[':dataKey'], data: mergedData });
+  }
+
+  let updateExpression = `SET ${sets.join(', ')}`;
+  if (RAW_BUCKET && removeFields.size) {
+    const removeNames = Array.from(removeFields).map(field => `#${field}`).join(', ');
+    updateExpression += ` REMOVE ${removeNames}`;
+  }
+
+  const res = await ddb.send(new UpdateItemCommand({
+    TableName: DOCS_TABLE,
+    Key: marshall(key),
+    UpdateExpression: updateExpression,
     ExpressionAttributeNames: names,
     ExpressionAttributeValues: marshall(values),
     ReturnValues: 'ALL_NEW'
   }));
-  return res.Attributes ? unmarshall(res.Attributes) : undefined;
+  const attributes = res.Attributes ? unmarshall(res.Attributes) : undefined;
+  if (!attributes) return undefined;
+  if (!RAW_BUCKET) return attributes;
+  if (!mergedData) {
+    mergedData = await getChunkData({ translationId, ownerId, chunkId, dataKey: attributes.dataKey });
+  }
+  return {
+    ...attributes,
+    ...mergedData
+  };
 }
 
 async function deleteAllChunks(translationId, ownerId = 'default') {
   if (!DOCS_TABLE) return;
-  const chunks = await listChunks(translationId, ownerId);
+  const chunks = await queryChunkItems(translationId, ownerId);
   if (!chunks.length) return;
+  if (RAW_BUCKET) {
+    await Promise.all(chunks.map(chunk => deleteChunkData({
+      translationId,
+      ownerId,
+      chunkId: chunk.chunkId,
+      dataKey: chunk.dataKey
+    })));
+  }
   const requests = chunks.map(chunk => ({
     DeleteRequest: {
       Key: marshall({ PK: chunk.PK, SK: chunk.SK })
@@ -154,4 +310,3 @@ module.exports = {
   summariseChunks,
   chunkSortKey
 };
-

@@ -391,6 +391,7 @@ async function handleChunkUpdate(event, translationId, ownerId, reviewer) {
       translationId,
       ownerId,
       chunkOrder: record.order,
+      chunkId: record.chunkId,
       patch: {
         reviewerHtml: nextHtml,
         lastUpdatedBy: reviewer.email || reviewer.name || reviewer.sub || 'reviewer',
